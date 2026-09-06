@@ -115,6 +115,10 @@ Options:
   -p, --port <PORT>      Port, auf dem der Server lauscht [default: 3000]
 ```
 
+## OpenBSD
+
+Build, Installation und rc.d-Dienst: siehe [docs/OPENBSD.md](docs/OPENBSD.md).
+
 ## Hinter Caddy betreiben
 
 Caddy kann von Haus aus kein Programm pro Request starten (kein CGI im Kern; dafür wäre ein Custom-Build mit dem Plugin `caddy-cgi` nötig). Der übliche Weg ist daher der `serve`-Modus hinter `reverse_proxy`:
@@ -132,6 +136,8 @@ password-generator/
 ├── src/
 │   ├── main.rs        # CLI, Subcommand "serve", Webserver
 │   └── password.rs    # Zeichenvorrat und Passwort-Generierung
+├── docs/
+│   └── OPENBSD.md     # Build und Betrieb unter OpenBSD
 ├── Cargo.toml
 ├── Dockerfile
 ├── compose.yml.example
