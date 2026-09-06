@@ -1,0 +1,28 @@
+# password-generator -- Docker Compose example. Copy to compose.yaml and adjust --
+# that copy is gitignored, so site-specific tweaks never land in the repo:
+#
+#   cp compose.yml.example compose.yaml
+#   docker compose up --build
+#
+# The service is self-contained, so there is nothing to mount -- publish the
+# port and you are done:
+#
+#   curl http://localhost:3000/
+
+services:
+  password-generator:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    # To change host port, container port or default length, adjust the
+    # mapping above and the command (the image's CMD already binds 0.0.0.0):
+    # command: ["serve", "--host", "0.0.0.0", "--port", "3000", "--length", "16"]
+    healthcheck:
+      # "/" is the only route; it answers with a fresh password, which is
+      # cheap enough to double as a liveness probe.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

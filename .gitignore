@@ -1,0 +1,5 @@
+/target
+
+# Real deployment files -- only the .example template is tracked.
+/compose.yaml
+/compose.yml
