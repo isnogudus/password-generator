@@ -105,10 +105,10 @@ curl http://127.0.0.1:3000/
 ```
 
 Flags lassen sich später ohne Bearbeiten des Skripts ändern, z.B. andere
-Standardlänge:
+Standardlänge, anderes Trennzeichen oder Strict-Modus:
 
 ```sh
-doas rcctl set password_generator flags serve --host 127.0.0.1 --port 3000 --length 16
+doas rcctl set password_generator flags serve --host 127.0.0.1 --port 3000 --length 16 --separator - --strict
 doas rcctl restart password_generator
 ```
 

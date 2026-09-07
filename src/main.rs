@@ -2,7 +2,9 @@ mod password;
 
 use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
 use clap::{Parser, Subcommand};
-use password::{DEFAULT_LENGTH, MAX_LENGTH, MIN_LENGTH, generate_password};
+use password::{
+    DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options, generate_password,
+};
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -13,6 +15,19 @@ struct Cli {
     /// Länge der Passwörter (beim Server per ?length=N überschreibbar)
     #[arg(short, long, default_value_t = DEFAULT_LENGTH, value_parser = parse_length, global = true)]
     length: usize,
+
+    /// Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar)
+    #[arg(short, long, default_value = DEFAULT_SEPARATOR, allow_hyphen_values = true, global = true)]
+    separator: String,
+
+    /// Keine Blöcke, Passwort am Stück ausgeben (entspricht --separator "")
+    #[arg(long, conflicts_with = "separator", global = true)]
+    no_separator: bool,
+
+    /// Strict-Modus: Sonderzeichen hinzufügen und mindestens eines garantieren,
+    /// für strenge Passwortrichtlinien (beim Server per ?strict=1 überschreibbar)
+    #[arg(short = 'x', long, global = true)]
+    strict: bool,
 
     /// Anzahl der auszugebenden Passwörter (nur CLI)
     #[arg(short = 'n', long, default_value_t = 1)]
@@ -46,28 +61,49 @@ fn parse_length(s: &str) -> Result<usize, String> {
     }
 }
 
+/// Interpretiert Query-Werte wie `1`, `true`, `yes` oder leer (`?strict`) als wahr
+fn parse_flag(value: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "" | "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(format!("Ungültiger Wahrheitswert '{other}'")),
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
-    default_length: usize,
+    defaults: Options,
 }
 
 #[derive(Deserialize)]
 struct Params {
     length: Option<usize>,
+    separator: Option<String>,
+    strict: Option<String>,
 }
 
 async fn password_handler(
     State(state): State<AppState>,
     Query(params): Query<Params>,
 ) -> Result<String, (StatusCode, String)> {
-    let length = params.length.unwrap_or(state.default_length);
-    generate_password(length).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+    let bad = |msg: String| (StatusCode::BAD_REQUEST, msg);
+
+    let strict = match params.strict {
+        Some(v) => parse_flag(&v).map_err(bad)?,
+        None => state.defaults.strict,
+    };
+    let opts = Options {
+        length: params.length.unwrap_or(state.defaults.length),
+        separator: params.separator.unwrap_or(state.defaults.separator),
+        strict,
+    };
+    generate_password(&opts).map_err(|e| bad(e.to_string()))
 }
 
-async fn serve(host: &str, port: u16, default_length: usize) {
+async fn serve(host: &str, port: u16, defaults: Options) {
     let app = Router::new()
         .route("/", get(password_handler))
-        .with_state(AppState { default_length });
+        .with_state(AppState { defaults });
 
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
@@ -80,16 +116,30 @@ async fn serve(host: &str, port: u16, default_length: usize) {
 fn main() {
     let cli = Cli::parse();
 
+    let opts = Options {
+        length: cli.length,
+        separator: if cli.no_separator {
+            String::new()
+        } else {
+            cli.separator
+        },
+        strict: cli.strict,
+    };
+    if let Err(e) = password::validate(&opts) {
+        eprintln!("error: {e}");
+        std::process::exit(2);
+    }
+
     match cli.command {
         Some(Command::Serve { host, port }) => {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(serve(&host, port, cli.length));
+                .block_on(serve(&host, port, opts));
         }
         None => {
             for _ in 0..cli.count {
-                // Länge ist durch parse_length bereits validiert
-                println!("{}", generate_password(cli.length).unwrap());
+                // Optionen sind oben bereits validiert
+                println!("{}", generate_password(&opts).unwrap());
             }
         }
     }

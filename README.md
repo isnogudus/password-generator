@@ -10,7 +10,12 @@ Passwörter bestehen aus Groß-/Kleinbuchstaben und Ziffern, dargestellt in Vier
 - `rCJS.2RCX.tAMG` (Standard: 12 Zeichen)
 - `Vr3c.Jt6h.UAK7.6u3J` (16 Zeichen)
 
-Der Punkt ist nur Darstellung: Die Passwortlänge zählt die Zeichen ohne Trennzeichen.
+Der Punkt ist nur Darstellung: Die Passwortlänge zählt die Zeichen ohne Trennzeichen. Das Trennzeichen ist frei wählbar (`--separator`) oder lässt sich ganz weglassen (`--no-separator`).
+
+**Strict-Modus** (`--strict`): Für Passwortabfragen, die zwingend Sonderzeichen verlangen. Erweitert den Zeichenvorrat um `!#$%&*+=?@_` und garantiert mindestens eines davon.
+
+- `@T7S.gwcW.Tt8x`
+- `cu5fwL#+92jg&!Bx` (strict, ohne Trennzeichen, 16 Zeichen)
 
 ## Zeichenvorrat
 
@@ -28,7 +33,13 @@ ABCDEFGHJKLMNPQRSTUVWX
 23456789
 ```
 
-Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstaben und eine Ziffer. Die Position der Pflichtzeichen wird zufällig gemischt.
+Im Strict-Modus kommen diese Sonderzeichen hinzu (auf QWERTY und QWERTZ vorhanden, ohne Quoting-Fallen wie `'"\` und ohne das mit `l`/`I` verwechselbare `|`):
+
+```
+!#$%&*+=?@_
+```
+
+Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstaben und eine Ziffer, im Strict-Modus zusätzlich ein Sonderzeichen. Die Position der Pflichtzeichen wird zufällig gemischt. Zeichen, die im Trennzeichen vorkommen, werden aus den Sonderzeichen entfernt, damit Blockgrenze und Inhalt unterscheidbar bleiben.
 
 ## Installation
 
@@ -61,6 +72,13 @@ password-generator
 
 # Fünf Passwörter mit 16 Zeichen
 password-generator -n 5 -l 16
+
+# Anderes Trennzeichen bzw. keines
+password-generator -s -
+password-generator --no-separator
+
+# Strict-Modus mit Sonderzeichen
+password-generator -x
 ```
 
 ### Webserver
@@ -82,11 +100,14 @@ http://127.0.0.1:3000
 # Mit curl
 curl http://127.0.0.1:3000
 
-# Andere Länge pro Request
+# Optionen pro Request
 curl 'http://127.0.0.1:3000/?length=20'
+curl 'http://127.0.0.1:3000/?separator=-'
+curl 'http://127.0.0.1:3000/?separator='          # ohne Trennzeichen
+curl 'http://127.0.0.1:3000/?strict=1'
 ```
 
-Jeder Request generiert ein neues, zufälliges Passwort. Ungültige Längen (erlaubt: 4 bis 128) beantwortet der Server mit `400 Bad Request`.
+Die Query-Parameter `length`, `separator` und `strict` überschreiben die beim Start gesetzten Standardwerte. Für `strict` gelten `1`, `true`, `yes`, `on` oder ein leerer Wert (`?strict`) als wahr. Jeder Request generiert ein neues, zufälliges Passwort. Ungültige Werte (Länge außerhalb 4 bis 128, Trennzeichen länger als 8 Zeichen) beantwortet der Server mit `400 Bad Request`.
 
 ### CLI-Optionen
 
@@ -100,19 +121,23 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --length <LENGTH>  Länge der Passwörter (beim Server per ?length=N überschreibbar) [default: 12]
-  -n, --count <COUNT>    Anzahl der auszugebenden Passwörter (nur CLI) [default: 1]
-  -h, --help             Print help
-  -V, --version          Print version
+  -l, --length <LENGTH>        Länge der Passwörter (beim Server per ?length=N überschreibbar) [default: 12]
+  -s, --separator <SEPARATOR>  Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar) [default: .]
+      --no-separator           Keine Blöcke, Passwort am Stück ausgeben (entspricht --separator "")
+  -x, --strict                 Strict-Modus: Sonderzeichen hinzufügen und mindestens eines garantieren, für strenge Passwortrichtlinien (beim Server per ?strict=1 überschreibbar)
+  -n, --count <COUNT>          Anzahl der auszugebenden Passwörter (nur CLI) [default: 1]
+  -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 ```
 Usage: password-generator serve [OPTIONS]
 
 Options:
-  -H, --host <HOST>      Host-Adresse, auf der der Server lauscht [default: 127.0.0.1]
-  -l, --length <LENGTH>  Länge der Passwörter (beim Server per ?length=N überschreibbar) [default: 12]
-  -p, --port <PORT>      Port, auf dem der Server lauscht [default: 3000]
+  -H, --host <HOST>            Host-Adresse, auf der der Server lauscht [default: 127.0.0.1]
+  -p, --port <PORT>            Port, auf dem der Server lauscht [default: 3000]
+  -l, --length, -s, --separator, --no-separator, -x, --strict
+                               wie oben, setzen die Standardwerte des Servers
 ```
 
 ## OpenBSD
