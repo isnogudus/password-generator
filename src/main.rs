@@ -1,7 +1,9 @@
+mod hash;
 mod password;
 
 use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
 use clap::{Parser, Subcommand};
+use hash::Algorithm;
 use password::{
     DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options, generate_password,
 };
@@ -28,6 +30,11 @@ struct Cli {
     /// für strenge Passwortrichtlinien (beim Server per ?strict=1 überschreibbar)
     #[arg(short = 'x', long, global = true)]
     strict: bool,
+
+    /// Zusätzlich einen Hash des Passworts ausgeben, durch Tabulator getrennt
+    /// (beim Server per ?hash=ALGO überschreibbar)
+    #[arg(long, value_enum, global = true)]
+    hash: Option<Algorithm>,
 
     /// Anzahl der auszugebenden Passwörter (nur CLI)
     #[arg(short = 'n', long, default_value_t = 1)]
@@ -70,9 +77,19 @@ fn parse_flag(value: &str) -> Result<bool, String> {
     }
 }
 
+/// Erzeugt ein Passwort und hängt bei Bedarf den Hash an: `<passwort>\t<hash>`
+fn render(opts: &Options, hash: Option<Algorithm>) -> Result<String, String> {
+    let password = generate_password(opts).map_err(|e| e.to_string())?;
+    match hash {
+        Some(algo) => Ok(format!("{password}\t{}", algo.hash(&password)?)),
+        None => Ok(password),
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     defaults: Options,
+    hash: Option<Algorithm>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +97,7 @@ struct Params {
     length: Option<usize>,
     separator: Option<String>,
     strict: Option<String>,
+    hash: Option<Algorithm>,
 }
 
 async fn password_handler(
@@ -97,13 +115,18 @@ async fn password_handler(
         separator: params.separator.unwrap_or(state.defaults.separator),
         strict,
     };
-    generate_password(&opts).map_err(|e| bad(e.to_string()))
+    // Hashen ist absichtlich langsam; nicht den Async-Worker blockieren.
+    let hash = params.hash.or(state.hash);
+    tokio::task::spawn_blocking(move || render(&opts, hash))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(bad)
 }
 
-async fn serve(host: &str, port: u16, defaults: Options) {
+async fn serve(host: &str, port: u16, defaults: Options, hash: Option<Algorithm>) {
     let app = Router::new()
         .route("/", get(password_handler))
-        .with_state(AppState { defaults });
+        .with_state(AppState { defaults, hash });
 
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
@@ -134,12 +157,17 @@ fn main() {
         Some(Command::Serve { host, port }) => {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(serve(&host, port, opts));
+                .block_on(serve(&host, port, opts, cli.hash));
         }
         None => {
             for _ in 0..cli.count {
-                // Optionen sind oben bereits validiert
-                println!("{}", generate_password(&opts).unwrap());
+                match render(&opts, cli.hash) {
+                    Ok(line) => println!("{line}"),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                }
             }
         }
     }

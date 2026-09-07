@@ -145,7 +145,37 @@ Der Dienst selbst bleibt auf `127.0.0.1` gebunden und ist nur über Caddy
 erreichbar. Alternativ geht auch das mitgelieferte `relayd`/`httpd`, Caddy ist
 aber wegen der automatischen TLS-Zertifikate der bequemere Weg.
 
-## 6. Aktualisieren
+## 6. Hashes für OpenBSD-Dienste
+
+OpenBSD verwendet für `passwd` und `htpasswd` bcrypt. Der Generator liefert
+das passende Format direkt mit:
+
+```sh
+password-generator --hash bcrypt
+```
+
+Die Ausgabe ist `<passwort>	<hash>` (Tabulator). Beispiele:
+
+```sh
+# Passwort für einen Systembenutzer setzen (Hash aus der zweiten Spalte)
+doas usermod -p "$(password-generator --hash bcrypt | tee /dev/tty | cut -f2)" benutzer
+
+# Eintrag für Caddy basic_auth
+password-generator --hash bcrypt
+```
+
+Für Caddy den Hash in die Caddyfile übernehmen:
+
+```
+pw.example.org {
+    basic_auth {
+        admin $2b$12$...
+    }
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+## 7. Aktualisieren
 
 ```sh
 cd password-generator
