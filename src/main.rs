@@ -4,9 +4,7 @@ mod password;
 use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
 use clap::{Parser, Subcommand};
 use hash::Algorithm;
-use password::{
-    DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options, generate_password,
-};
+use password::{DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options, generate_password};
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -14,9 +12,10 @@ use serde::Deserialize;
 #[command(version = "0.1.0")]
 #[command(about = "Generiert zufällige Passwörter (CLI oder Webserver)")]
 struct Cli {
-    /// Länge der Passwörter (beim Server per ?length=N überschreibbar)
-    #[arg(short, long, default_value_t = DEFAULT_LENGTH, value_parser = parse_length, global = true)]
-    length: usize,
+    /// Länge der Passwörter, Standard 12 bzw. 16 mit --lowercase
+    /// (beim Server per ?length=N überschreibbar)
+    #[arg(short, long, value_parser = parse_length, global = true)]
+    length: Option<usize>,
 
     /// Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar)
     #[arg(short, long, default_value = DEFAULT_SEPARATOR, allow_hyphen_values = true, global = true)]
@@ -26,10 +25,28 @@ struct Cli {
     #[arg(long, conflicts_with = "separator", global = true)]
     no_separator: bool,
 
-    /// Strict-Modus: Sonderzeichen hinzufügen und mindestens eines garantieren,
-    /// für strenge Passwortrichtlinien (beim Server per ?strict=1 überschreibbar)
+    /// Strict-Modus für strenge Passwortrichtlinien: Sonderzeichen hinzufügen
+    /// und mindestens eines garantieren; mit --lowercase wie --upper --digit
+    /// --special (beim Server per ?strict=1 überschreibbar)
     #[arg(short = 'x', long, global = true)]
     strict: bool,
+
+    /// Kleinbuchstaben-Modus: nur Kleinbuchstaben, Standardlänge 16
+    /// (beim Server per ?lowercase=1 überschreibbar)
+    #[arg(short = 'w', long, global = true)]
+    lowercase: bool,
+
+    /// Genau ein Großbuchstabe, Rest klein (nur mit --lowercase; Server: ?upper=1)
+    #[arg(long, requires = "lowercase", global = true)]
+    upper: bool,
+
+    /// Genau eine Ziffer, Rest klein (nur mit --lowercase; Server: ?digit=1)
+    #[arg(long, requires = "lowercase", global = true)]
+    digit: bool,
+
+    /// Genau ein Sonderzeichen, Rest klein (nur mit --lowercase; Server: ?special=1)
+    #[arg(long, requires = "lowercase", global = true)]
+    special: bool,
 
     /// Zusätzlich einen Hash des Passworts ausgeben, durch Tabulator getrennt
     /// (beim Server per ?hash=ALGO überschreibbar)
@@ -89,6 +106,8 @@ fn render(opts: &Options, hash: Option<Algorithm>) -> Result<String, String> {
 #[derive(Clone)]
 struct AppState {
     defaults: Options,
+    /// Per CLI gesetzte Länge; None = modusabhängiger Standard
+    length: Option<usize>,
     hash: Option<Algorithm>,
 }
 
@@ -97,6 +116,10 @@ struct Params {
     length: Option<usize>,
     separator: Option<String>,
     strict: Option<String>,
+    lowercase: Option<String>,
+    upper: Option<String>,
+    digit: Option<String>,
+    special: Option<String>,
     hash: Option<Algorithm>,
 }
 
@@ -105,15 +128,29 @@ async fn password_handler(
     Query(params): Query<Params>,
 ) -> Result<String, (StatusCode, String)> {
     let bad = |msg: String| (StatusCode::BAD_REQUEST, msg);
-
-    let strict = match params.strict {
-        Some(v) => parse_flag(&v).map_err(bad)?,
-        None => state.defaults.strict,
+    let flag = |value: Option<String>, default: bool| -> Result<bool, (StatusCode, String)> {
+        match value {
+            Some(v) => parse_flag(&v).map_err(bad),
+            None => Ok(default),
+        }
     };
+
+    let d = &state.defaults;
+    let lowercase = flag(params.lowercase, d.lowercase)?;
+    // Ohne Kleinbuchstaben-Modus gelten die Extras aus der Servervorgabe nicht;
+    // explizit im Request gesetzte Extras werden von validate() abgewiesen.
+    let extra = |server_default: bool| lowercase && server_default;
     let opts = Options {
-        length: params.length.unwrap_or(state.defaults.length),
-        separator: params.separator.unwrap_or(state.defaults.separator),
-        strict,
+        length: params
+            .length
+            .or(state.length)
+            .unwrap_or_else(|| Options::default_length(lowercase)),
+        separator: params.separator.unwrap_or_else(|| d.separator.clone()),
+        strict: flag(params.strict, d.strict)?,
+        lowercase,
+        upper: flag(params.upper, extra(d.upper))?,
+        digit: flag(params.digit, extra(d.digit))?,
+        special: flag(params.special, extra(d.special))?,
     };
     // Hashen ist absichtlich langsam; nicht den Async-Worker blockieren.
     let hash = params.hash.or(state.hash);
@@ -123,10 +160,20 @@ async fn password_handler(
         .map_err(bad)
 }
 
-async fn serve(host: &str, port: u16, defaults: Options, hash: Option<Algorithm>) {
+async fn serve(
+    host: &str,
+    port: u16,
+    defaults: Options,
+    length: Option<usize>,
+    hash: Option<Algorithm>,
+) {
     let app = Router::new()
         .route("/", get(password_handler))
-        .with_state(AppState { defaults, hash });
+        .with_state(AppState {
+            defaults,
+            length,
+            hash,
+        });
 
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
@@ -140,13 +187,19 @@ fn main() {
     let cli = Cli::parse();
 
     let opts = Options {
-        length: cli.length,
+        length: cli
+            .length
+            .unwrap_or_else(|| Options::default_length(cli.lowercase)),
         separator: if cli.no_separator {
             String::new()
         } else {
             cli.separator
         },
         strict: cli.strict,
+        lowercase: cli.lowercase,
+        upper: cli.upper,
+        digit: cli.digit,
+        special: cli.special,
     };
     if let Err(e) = password::validate(&opts) {
         eprintln!("error: {e}");
@@ -157,7 +210,7 @@ fn main() {
         Some(Command::Serve { host, port }) => {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(serve(&host, port, opts, cli.hash));
+                .block_on(serve(&host, port, opts, cli.length, cli.hash));
         }
         None => {
             for _ in 0..cli.count {

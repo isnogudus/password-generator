@@ -17,6 +17,11 @@ Der Punkt ist nur Darstellung: Die Passwortlänge zählt die Zeichen ohne Trennz
 - `@T7S.gwcW.Tt8x`
 - `cu5fwL#+92jg&!Bx` (strict, ohne Trennzeichen, 16 Zeichen)
 
+**Kleinbuchstaben-Modus** (`--lowercase`): Nur Kleinbuchstaben, dafür 16 Zeichen. Angelehnt an Apples Schlüsselbund-Passwörter: ohne Shift-Taste tippbar, auf jeder Tastatur gleich, und mit 16 Zeichen genauso stark wie 12 gemischte. Auf Wunsch kommt genau ein Großbuchstabe, eine Ziffer und/oder ein Sonderzeichen dazu, damit strenge Richtlinien zufrieden sind.
+
+- `gpdq.hkmr.kdnd.xpdg`
+- `wmd$.hbdg.grji.gGm7` (`--lowercase --upper --digit --special`)
+
 **Hashes** (`--hash`): Auf Wunsch wird zu jedem Passwort gleich der passende Hash ausgegeben, getrennt durch einen Tabulator. Unterstützt werden bcrypt, SHA-512-crypt und Argon2id.
 
 ```
@@ -45,7 +50,18 @@ Im Strict-Modus kommen diese Sonderzeichen hinzu (auf QWERTY und QWERTZ vorhande
 !#$%&*+=?@_
 ```
 
-Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstaben und eine Ziffer, im Strict-Modus zusätzlich ein Sonderzeichen. Die Position der Pflichtzeichen wird zufällig gemischt. Zeichen, die im Trennzeichen vorkommen, werden aus den Sonderzeichen entfernt, damit Blockgrenze und Inhalt unterscheidbar bleiben.
+Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstaben und eine Ziffer, im Strict-Modus zusätzlich ein Sonderzeichen. Im Kleinbuchstaben-Modus sind alle Zeichen klein, bis auf genau einen Großbuchstaben (`--upper`), eine Ziffer (`--digit`) bzw. ein Sonderzeichen (`--special`), sofern zugeschaltet; `--strict` schaltet dort alle drei zu. Die Position der Pflichtzeichen wird zufällig gemischt. Zeichen, die im Trennzeichen vorkommen, werden aus den Sonderzeichen entfernt, damit Blockgrenze und Inhalt unterscheidbar bleiben.
+
+### Entropie
+
+| Modus                                   | Zeichen | Vorrat | Entropie |
+|-----------------------------------------|---------|--------|----------|
+| Standard                                | 12      | 52     | ~68 Bit  |
+| Strict                                  | 12      | 63     | ~72 Bit  |
+| Kleinbuchstaben                         | 16      | 22     | ~71 Bit  |
+| Kleinbuchstaben, 20 Zeichen             | 20      | 22     | ~89 Bit  |
+
+Die Extras im Kleinbuchstaben-Modus ändern die Entropie kaum. Alles über 70 Bit ist gegen Online-Angriffe wie gegen Offline-Angriffe auf bcrypt oder Argon2 mehr als ausreichend; der Hebel ist die Länge, ein Block mehr bringt 18 Bit.
 
 ## Installation
 
@@ -85,6 +101,11 @@ password-generator --no-separator
 
 # Strict-Modus mit Sonderzeichen
 password-generator -x
+
+# Kleinbuchstaben-Modus (16 Zeichen), wahlweise mit je einem Extra
+password-generator -w
+password-generator -w --upper --digit --special
+password-generator -w -x                    # dasselbe wie die Zeile darüber
 
 # Passwort und Hash (bcrypt, sha512-crypt oder argon2id)
 password-generator --hash bcrypt
@@ -128,10 +149,11 @@ curl 'http://127.0.0.1:3000/?length=20'
 curl 'http://127.0.0.1:3000/?separator=-'
 curl 'http://127.0.0.1:3000/?separator='          # ohne Trennzeichen
 curl 'http://127.0.0.1:3000/?strict=1'
+curl 'http://127.0.0.1:3000/?lowercase=1&digit=1'
 curl 'http://127.0.0.1:3000/?hash=bcrypt'         # Passwort<TAB>Hash
 ```
 
-Die Query-Parameter `length`, `separator`, `strict` und `hash` überschreiben die beim Start gesetzten Standardwerte. Für `strict` gelten `1`, `true`, `yes`, `on` oder ein leerer Wert (`?strict`) als wahr. Jeder Request generiert ein neues, zufälliges Passwort. Ungültige Werte (Länge außerhalb 4 bis 128, Trennzeichen länger als 8 Zeichen) beantwortet der Server mit `400 Bad Request`.
+Die Query-Parameter `length`, `separator`, `strict`, `lowercase`, `upper`, `digit`, `special` und `hash` überschreiben die beim Start gesetzten Standardwerte. Für die Schalter gelten `1`, `true`, `yes`, `on` oder ein leerer Wert (`?strict`) als wahr. Jeder Request generiert ein neues, zufälliges Passwort. Ungültige Werte (Länge außerhalb 4 bis 128, Trennzeichen länger als 8 Zeichen) beantwortet der Server mit `400 Bad Request`.
 
 ### CLI-Optionen
 
@@ -145,10 +167,14 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --length <LENGTH>        Länge der Passwörter (beim Server per ?length=N überschreibbar) [default: 12]
+  -l, --length <LENGTH>        Länge der Passwörter, Standard 12 bzw. 16 mit --lowercase (beim Server per ?length=N überschreibbar)
   -s, --separator <SEPARATOR>  Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar) [default: .]
       --no-separator           Keine Blöcke, Passwort am Stück ausgeben (entspricht --separator "")
-  -x, --strict                 Strict-Modus: Sonderzeichen hinzufügen und mindestens eines garantieren, für strenge Passwortrichtlinien (beim Server per ?strict=1 überschreibbar)
+  -x, --strict                 Strict-Modus für strenge Passwortrichtlinien: Sonderzeichen hinzufügen und mindestens eines garantieren; mit --lowercase wie --upper --digit --special (beim Server per ?strict=1 überschreibbar)
+  -w, --lowercase              Kleinbuchstaben-Modus: nur Kleinbuchstaben, Standardlänge 16 (beim Server per ?lowercase=1 überschreibbar)
+      --upper                  Genau ein Großbuchstabe, Rest klein (nur mit --lowercase; Server: ?upper=1)
+      --digit                  Genau eine Ziffer, Rest klein (nur mit --lowercase; Server: ?digit=1)
+      --special                Genau ein Sonderzeichen, Rest klein (nur mit --lowercase; Server: ?special=1)
       --hash <HASH>            Zusätzlich einen Hash des Passworts ausgeben, durch Tabulator getrennt (beim Server per ?hash=ALGO überschreibbar) [possible values: bcrypt, sha512-crypt, argon2id]
   -n, --count <COUNT>          Anzahl der auszugebenden Passwörter (nur CLI) [default: 1]
   -h, --help                   Print help
@@ -161,7 +187,8 @@ Usage: password-generator serve [OPTIONS]
 Options:
   -H, --host <HOST>            Host-Adresse, auf der der Server lauscht [default: 127.0.0.1]
   -p, --port <PORT>            Port, auf dem der Server lauscht [default: 3000]
-  -l, --length, -s, --separator, --no-separator, -x, --strict, --hash
+  -l, --length, -s, --separator, --no-separator, -x, --strict,
+  -w, --lowercase, --upper, --digit, --special, --hash
                                wie oben, setzen die Standardwerte des Servers
 ```
 
