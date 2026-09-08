@@ -4,7 +4,7 @@ mod password;
 use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
 use clap::{Parser, Subcommand};
 use hash::Algorithm;
-use password::{DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options, generate_password};
+use password::{DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Mode, Options, generate_password};
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -12,7 +12,7 @@ use serde::Deserialize;
 #[command(version = "0.1.0")]
 #[command(about = "Generiert zufällige Passwörter (CLI oder Webserver)")]
 struct Cli {
-    /// Länge der Passwörter, Standard 12 bzw. 16 mit --lowercase
+    /// Länge der Passwörter, Standard 12, 16 mit --lowercase oder --alnum
     /// (beim Server per ?length=N überschreibbar)
     #[arg(short, long, value_parser = parse_length, global = true)]
     length: Option<usize>,
@@ -27,25 +27,32 @@ struct Cli {
 
     /// Strict-Modus für strenge Passwortrichtlinien: Sonderzeichen hinzufügen
     /// und mindestens eines garantieren; mit --lowercase wie --upper --digit
-    /// --special (beim Server per ?strict=1 überschreibbar)
+    /// --special, mit --alnum wie --upper --special (Server: ?strict=1)
     #[arg(short = 'x', long, global = true)]
     strict: bool,
 
     /// Kleinbuchstaben-Modus: nur Kleinbuchstaben, Standardlänge 16
     /// (beim Server per ?lowercase=1 überschreibbar)
-    #[arg(short = 'w', long, global = true)]
+    #[arg(short = 'w', long, conflicts_with = "alnum", global = true)]
     lowercase: bool,
 
-    /// Genau ein Großbuchstabe, Rest klein (nur mit --lowercase; Server: ?upper=1)
-    #[arg(long, requires = "lowercase", global = true)]
+    /// Alnum-Modus: Kleinbuchstaben und Ziffern 0-9, Standardlänge 16
+    /// (beim Server per ?alnum=1 überschreibbar)
+    #[arg(short = 'a', long, global = true)]
+    alnum: bool,
+
+    /// Genau ein Großbuchstabe, Rest aus dem Grundvorrat
+    /// (mit --lowercase oder --alnum; Server: ?upper=1)
+    #[arg(long, global = true)]
     upper: bool,
 
     /// Genau eine Ziffer, Rest klein (nur mit --lowercase; Server: ?digit=1)
-    #[arg(long, requires = "lowercase", global = true)]
+    #[arg(long, global = true)]
     digit: bool,
 
-    /// Genau ein Sonderzeichen, Rest klein (nur mit --lowercase; Server: ?special=1)
-    #[arg(long, requires = "lowercase", global = true)]
+    /// Genau ein Sonderzeichen, Rest aus dem Grundvorrat
+    /// (mit --lowercase oder --alnum; Server: ?special=1)
+    #[arg(long, global = true)]
     special: bool,
 
     /// Zusätzlich einen Hash des Passworts ausgeben, durch Tabulator getrennt
@@ -117,6 +124,7 @@ struct Params {
     separator: Option<String>,
     strict: Option<String>,
     lowercase: Option<String>,
+    alnum: Option<String>,
     upper: Option<String>,
     digit: Option<String>,
     special: Option<String>,
@@ -136,18 +144,39 @@ async fn password_handler(
     };
 
     let d = &state.defaults;
-    let lowercase = flag(params.lowercase, d.lowercase)?;
-    // Ohne Kleinbuchstaben-Modus gelten die Extras aus der Servervorgabe nicht;
-    // explizit im Request gesetzte Extras werden von validate() abgewiesen.
-    let extra = |server_default: bool| lowercase && server_default;
+    // Ein im Request eingeschalteter Modus gewinnt; ein ausgeschalteter
+    // Servermodus fällt auf gemischt zurück; sonst gilt die Servervorgabe.
+    let lowercase = params
+        .lowercase
+        .map(|v| parse_flag(&v))
+        .transpose()
+        .map_err(bad)?;
+    let alnum = params
+        .alnum
+        .map(|v| parse_flag(&v))
+        .transpose()
+        .map_err(bad)?;
+    let mode = match (lowercase, alnum) {
+        (Some(true), Some(true)) => {
+            return Err(bad("lowercase und alnum schließen sich aus".to_string()));
+        }
+        (Some(true), _) => Mode::Lowercase,
+        (_, Some(true)) => Mode::Alnum,
+        (Some(false), _) if d.mode == Mode::Lowercase => Mode::Mixed,
+        (_, Some(false)) if d.mode == Mode::Alnum => Mode::Mixed,
+        _ => d.mode,
+    };
+    // Bei Moduswechsel per Request gelten die Extras aus der Servervorgabe
+    // nicht; explizit im Request gesetzte Extras prüft validate().
+    let extra = |server_default: bool| mode == d.mode && server_default;
     let opts = Options {
         length: params
             .length
             .or(state.length)
-            .unwrap_or_else(|| Options::default_length(lowercase)),
+            .unwrap_or_else(|| mode.default_length()),
         separator: params.separator.unwrap_or_else(|| d.separator.clone()),
         strict: flag(params.strict, d.strict)?,
-        lowercase,
+        mode,
         upper: flag(params.upper, extra(d.upper))?,
         digit: flag(params.digit, extra(d.digit))?,
         special: flag(params.special, extra(d.special))?,
@@ -186,17 +215,22 @@ async fn serve(
 fn main() {
     let cli = Cli::parse();
 
+    let mode = if cli.lowercase {
+        Mode::Lowercase
+    } else if cli.alnum {
+        Mode::Alnum
+    } else {
+        Mode::Mixed
+    };
     let opts = Options {
-        length: cli
-            .length
-            .unwrap_or_else(|| Options::default_length(cli.lowercase)),
+        length: cli.length.unwrap_or_else(|| mode.default_length()),
         separator: if cli.no_separator {
             String::new()
         } else {
             cli.separator
         },
         strict: cli.strict,
-        lowercase: cli.lowercase,
+        mode,
         upper: cli.upper,
         digit: cli.digit,
         special: cli.special,

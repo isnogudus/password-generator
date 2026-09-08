@@ -5,6 +5,8 @@ use rand::seq::SliceRandom;
 pub const DEFAULT_LENGTH: usize = 12;
 /// Standardlänge im Kleinbuchstaben-Modus (gleicht den kleineren Vorrat aus)
 pub const DEFAULT_LOWERCASE_LENGTH: usize = 16;
+/// Standardlänge im Alnum-Modus (Kleinbuchstaben und Ziffern)
+pub const DEFAULT_ALNUM_LENGTH: usize = 16;
 /// Kürzestes erlaubtes Passwort
 pub const MIN_LENGTH: usize = 4;
 /// Längstes erlaubtes Passwort
@@ -23,10 +25,37 @@ const LOWER: &[u8] = b"abcdefghijkmnpqrstuvwx";
 const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWX";
 /// Ziffern ohne 0 (ähnlich O) und 1 (ähnlich l/I).
 const DIGITS: &[u8] = b"23456789";
+/// Alle Ziffern für den Alnum-Modus: l und o fehlen dort ohnehin, und die
+/// Großbuchstaben I und O kommen im gesamten Vorrat nicht vor, daher sind
+/// 0 und 1 dort nicht verwechselbar.
+const ALL_DIGITS: &[u8] = b"0123456789";
 /// Sonderzeichen für den Strict-Modus: auf QWERTY und QWERTZ vorhanden, von
 /// gängigen Passwortrichtlinien akzeptiert, ohne Quoting-Fallen (`'"\``) und
 /// ohne verwechselbare Zeichen (`|`).
 const SPECIAL: &[u8] = b"!#$%&*+=?@_";
+
+/// Grundvorrat des Passworts
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Klein-, Großbuchstaben und Ziffern gemischt
+    #[default]
+    Mixed,
+    /// Nur Kleinbuchstaben (plus optionale Extras)
+    Lowercase,
+    /// Kleinbuchstaben und Ziffern (plus optionale Extras)
+    Alnum,
+}
+
+impl Mode {
+    /// Standardlänge für den jeweiligen Modus
+    pub fn default_length(self) -> usize {
+        match self {
+            Mode::Mixed => DEFAULT_LENGTH,
+            Mode::Lowercase => DEFAULT_LOWERCASE_LENGTH,
+            Mode::Alnum => DEFAULT_ALNUM_LENGTH,
+        }
+    }
+}
 
 /// Einstellungen für die Passwort-Erzeugung
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,28 +65,17 @@ pub struct Options {
     /// Trennzeichen zwischen den Viererblöcken; leer = keine Blöcke
     pub separator: String,
     /// Gemischter Modus: Sonderzeichen hinzufügen und mindestens eines
-    /// garantieren. Kleinbuchstaben-Modus: entspricht `upper`, `digit` und
-    /// `special` zusammen.
+    /// garantieren. Kleinbuchstaben-/Alnum-Modus: alle dort erlaubten
+    /// Extras zusammen.
     pub strict: bool,
-    /// Kleinbuchstaben-Modus: Grundvorrat sind nur Kleinbuchstaben
-    pub lowercase: bool,
-    /// Kleinbuchstaben-Modus: genau ein Großbuchstabe
+    /// Grundvorrat
+    pub mode: Mode,
+    /// Extra: genau ein Großbuchstabe (Kleinbuchstaben- und Alnum-Modus)
     pub upper: bool,
-    /// Kleinbuchstaben-Modus: genau eine Ziffer
+    /// Extra: genau eine Ziffer (nur Kleinbuchstaben-Modus)
     pub digit: bool,
-    /// Kleinbuchstaben-Modus: genau ein Sonderzeichen
+    /// Extra: genau ein Sonderzeichen (Kleinbuchstaben- und Alnum-Modus)
     pub special: bool,
-}
-
-impl Options {
-    /// Standardlänge für den jeweiligen Modus
-    pub fn default_length(lowercase: bool) -> usize {
-        if lowercase {
-            DEFAULT_LOWERCASE_LENGTH
-        } else {
-            DEFAULT_LENGTH
-        }
-    }
 }
 
 impl Default for Options {
@@ -66,7 +84,7 @@ impl Default for Options {
             length: DEFAULT_LENGTH,
             separator: DEFAULT_SEPARATOR.to_string(),
             strict: false,
-            lowercase: false,
+            mode: Mode::Mixed,
             upper: false,
             digit: false,
             special: false,
@@ -79,7 +97,7 @@ impl Default for Options {
 pub enum Error {
     InvalidLength(usize),
     SeparatorTooLong(usize),
-    RequiresLowercase,
+    ExtraNotAllowed(&'static str),
 }
 
 impl std::fmt::Display for Error {
@@ -93,9 +111,10 @@ impl std::fmt::Display for Error {
                 f,
                 "Trennzeichen zu lang ({n}): erlaubt sind höchstens {MAX_SEPARATOR_LEN} Zeichen"
             ),
-            Error::RequiresLowercase => write!(
+            Error::ExtraNotAllowed(extra) => write!(
                 f,
-                "upper, digit und special gelten nur im Kleinbuchstaben-Modus (lowercase)"
+                "{extra} ist in diesem Modus nicht erlaubt: upper und special brauchen \
+                 lowercase oder alnum, digit braucht lowercase"
             ),
         }
     }
@@ -128,37 +147,58 @@ fn special_without_separator(separator: &str) -> Vec<u8> {
 /// einen Großbuchstaben, eine Ziffer bzw. ein Sonderzeichen, sofern
 /// zugeschaltet.
 ///
+/// Alnum-Modus: Kleinbuchstaben und Ziffern, garantiert je mindestens eins
+/// von beiden, bis auf genau einen Großbuchstaben bzw. ein Sonderzeichen,
+/// sofern zugeschaltet.
+///
 /// Anschließend wird gemischt, damit die Pflichtzeichen keine feste Position haben.
 fn generate_chars<R: Rng>(rng: &mut R, opts: &Options) -> Vec<char> {
     let special = special_without_separator(&opts.separator);
     let mut chars: Vec<char> = Vec::with_capacity(opts.length);
 
-    if opts.lowercase {
-        if opts.upper || opts.strict {
-            chars.push(random_char(rng, UPPER));
-        }
-        if opts.digit || opts.strict {
-            chars.push(random_char(rng, DIGITS));
-        }
-        if opts.special || opts.strict {
-            chars.push(random_char(rng, &special));
-        }
-        while chars.len() < opts.length {
+    match opts.mode {
+        Mode::Mixed => {
+            let mut all: Vec<u8> = [LOWER, UPPER, DIGITS].concat();
+            if opts.strict {
+                all.extend_from_slice(&special);
+            }
             chars.push(random_char(rng, LOWER));
+            chars.push(random_char(rng, UPPER));
+            chars.push(random_char(rng, DIGITS));
+            if opts.strict {
+                chars.push(random_char(rng, &special));
+            }
+            while chars.len() < opts.length {
+                chars.push(random_char(rng, &all));
+            }
         }
-    } else {
-        let mut all: Vec<u8> = [LOWER, UPPER, DIGITS].concat();
-        if opts.strict {
-            all.extend_from_slice(&special);
+        Mode::Lowercase => {
+            if opts.upper || opts.strict {
+                chars.push(random_char(rng, UPPER));
+            }
+            if opts.digit || opts.strict {
+                chars.push(random_char(rng, DIGITS));
+            }
+            if opts.special || opts.strict {
+                chars.push(random_char(rng, &special));
+            }
+            while chars.len() < opts.length {
+                chars.push(random_char(rng, LOWER));
+            }
         }
-        chars.push(random_char(rng, LOWER));
-        chars.push(random_char(rng, UPPER));
-        chars.push(random_char(rng, DIGITS));
-        if opts.strict {
-            chars.push(random_char(rng, &special));
-        }
-        while chars.len() < opts.length {
-            chars.push(random_char(rng, &all));
+        Mode::Alnum => {
+            let base: Vec<u8> = [LOWER, ALL_DIGITS].concat();
+            if opts.upper || opts.strict {
+                chars.push(random_char(rng, UPPER));
+            }
+            if opts.special || opts.strict {
+                chars.push(random_char(rng, &special));
+            }
+            chars.push(random_char(rng, LOWER));
+            chars.push(random_char(rng, ALL_DIGITS));
+            while chars.len() < opts.length {
+                chars.push(random_char(rng, &base));
+            }
         }
     }
 
@@ -187,8 +227,24 @@ pub fn validate(opts: &Options) -> Result<(), Error> {
     if sep_len > MAX_SEPARATOR_LEN {
         return Err(Error::SeparatorTooLong(sep_len));
     }
-    if !opts.lowercase && (opts.upper || opts.digit || opts.special) {
-        return Err(Error::RequiresLowercase);
+    match opts.mode {
+        Mode::Mixed => {
+            if opts.upper {
+                return Err(Error::ExtraNotAllowed("upper"));
+            }
+            if opts.digit {
+                return Err(Error::ExtraNotAllowed("digit"));
+            }
+            if opts.special {
+                return Err(Error::ExtraNotAllowed("special"));
+            }
+        }
+        Mode::Alnum => {
+            if opts.digit {
+                return Err(Error::ExtraNotAllowed("digit"));
+            }
+        }
+        Mode::Lowercase => {}
     }
     Ok(())
 }
@@ -340,7 +396,7 @@ mod tests {
         let o = Options {
             length: 16,
             separator: String::new(),
-            lowercase: true,
+            mode: Mode::Lowercase,
             ..Options::default()
         };
         for _ in 0..200 {
@@ -356,7 +412,7 @@ mod tests {
         let base = Options {
             length: 16,
             separator: String::new(),
-            lowercase: true,
+            mode: Mode::Lowercase,
             ..Options::default()
         };
         let cases = [
@@ -384,7 +440,7 @@ mod tests {
         let o = Options {
             length: MIN_LENGTH,
             separator: String::new(),
-            lowercase: true,
+            mode: Mode::Lowercase,
             strict: true,
             ..Options::default()
         };
@@ -395,18 +451,80 @@ mod tests {
     }
 
     #[test]
-    fn default_length_per_mode() {
-        assert_eq!(Options::default_length(false), 12);
-        assert_eq!(Options::default_length(true), 16);
+    fn alnum_uses_lowercase_and_all_ten_digits() {
+        let o = Options {
+            length: 8,
+            separator: String::new(),
+            mode: Mode::Alnum,
+            ..Options::default()
+        };
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..300 {
+            let pw = generate_password(&o).unwrap();
+            assert_eq!(pw.len(), 8);
+            let (lower, upper, digit, special) = count_classes(&pw);
+            assert_eq!(lower + digit, 8, "{pw}");
+            assert_eq!((upper, special), (0, 0), "{pw}");
+            assert!(lower >= 1 && digit >= 1, "{pw}");
+            assert!(!pw.chars().any(|c| "loyz".contains(c)), "{pw}");
+            seen.extend(pw.chars());
+        }
+        assert!(seen.contains(&'0') && seen.contains(&'1'), "0 und 1 fehlen");
     }
 
     #[test]
-    fn extras_require_lowercase() {
+    fn alnum_with_extras() {
+        let base = Options {
+            length: 8,
+            separator: String::new(),
+            mode: Mode::Alnum,
+            ..Options::default()
+        };
+        // (upper, special, strict) -> erwartete Anzahl Groß- und Sonderzeichen
+        let cases = [
+            (true, false, false, (1, 0)),
+            (false, true, false, (0, 1)),
+            (true, true, false, (1, 1)),
+            (false, false, true, (1, 1)),
+        ];
+        for (upper, special, strict, (want_upper, want_special)) in cases {
+            let o = Options {
+                upper,
+                special,
+                strict,
+                ..base.clone()
+            };
+            for _ in 0..100 {
+                let pw = generate_password(&o).unwrap();
+                let (lower, got_upper, digit, got_special) = count_classes(&pw);
+                assert_eq!((got_upper, got_special), (want_upper, want_special), "{pw}");
+                assert_eq!(lower + digit + got_upper + got_special, 8, "{pw}");
+                assert!(lower >= 1 && digit >= 1, "{pw}");
+            }
+        }
+    }
+
+    #[test]
+    fn default_length_per_mode() {
+        assert_eq!(Mode::Mixed.default_length(), 12);
+        assert_eq!(Mode::Lowercase.default_length(), 16);
+        assert_eq!(Mode::Alnum.default_length(), 16);
+    }
+
+    #[test]
+    fn extras_only_where_allowed() {
         let o = Options {
             upper: true,
             ..Options::default()
         };
-        assert_eq!(generate_password(&o), Err(Error::RequiresLowercase));
+        assert_eq!(generate_password(&o), Err(Error::ExtraNotAllowed("upper")));
+        let o = Options {
+            mode: Mode::Alnum,
+            digit: true,
+            length: 8,
+            ..Options::default()
+        };
+        assert_eq!(generate_password(&o), Err(Error::ExtraNotAllowed("digit")));
     }
 
     #[test]
