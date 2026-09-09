@@ -4,7 +4,9 @@ mod password;
 use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
 use clap::{Parser, Subcommand};
 use hash::Algorithm;
-use password::{DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Mode, Options, generate_password};
+use password::{
+    DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Mode, Options, generate_password,
+};
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -12,10 +14,9 @@ use serde::Deserialize;
 #[command(version = "0.1.0")]
 #[command(about = "Generiert zufällige Passwörter (CLI oder Webserver)")]
 struct Cli {
-    /// Länge der Passwörter, Standard 12, 16 mit --lowercase oder --alnum
-    /// (beim Server per ?length=N überschreibbar)
-    #[arg(short, long, value_parser = parse_length, global = true)]
-    length: Option<usize>,
+    /// Länge der Passwörter (beim Server per ?length=N überschreibbar)
+    #[arg(short, long, default_value_t = DEFAULT_LENGTH, value_parser = parse_length, global = true)]
+    length: usize,
 
     /// Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar)
     #[arg(short, long, default_value = DEFAULT_SEPARATOR, allow_hyphen_values = true, global = true)]
@@ -31,12 +32,12 @@ struct Cli {
     #[arg(short = 'x', long, global = true)]
     strict: bool,
 
-    /// Kleinbuchstaben-Modus: nur Kleinbuchstaben, Standardlänge 16
+    /// Kleinbuchstaben-Modus: nur Kleinbuchstaben
     /// (beim Server per ?lowercase=1 überschreibbar)
     #[arg(short = 'w', long, conflicts_with = "alnum", global = true)]
     lowercase: bool,
 
-    /// Alnum-Modus: Kleinbuchstaben und Ziffern 0-9, Standardlänge 16
+    /// Alnum-Modus: Kleinbuchstaben und Ziffern 0-9
     /// (beim Server per ?alnum=1 überschreibbar)
     #[arg(short = 'a', long, global = true)]
     alnum: bool,
@@ -113,8 +114,6 @@ fn render(opts: &Options, hash: Option<Algorithm>) -> Result<String, String> {
 #[derive(Clone)]
 struct AppState {
     defaults: Options,
-    /// Per CLI gesetzte Länge; None = modusabhängiger Standard
-    length: Option<usize>,
     hash: Option<Algorithm>,
 }
 
@@ -170,10 +169,7 @@ async fn password_handler(
     // nicht; explizit im Request gesetzte Extras prüft validate().
     let extra = |server_default: bool| mode == d.mode && server_default;
     let opts = Options {
-        length: params
-            .length
-            .or(state.length)
-            .unwrap_or_else(|| mode.default_length()),
+        length: params.length.unwrap_or(d.length),
         separator: params.separator.unwrap_or_else(|| d.separator.clone()),
         strict: flag(params.strict, d.strict)?,
         mode,
@@ -189,20 +185,10 @@ async fn password_handler(
         .map_err(bad)
 }
 
-async fn serve(
-    host: &str,
-    port: u16,
-    defaults: Options,
-    length: Option<usize>,
-    hash: Option<Algorithm>,
-) {
+async fn serve(host: &str, port: u16, defaults: Options, hash: Option<Algorithm>) {
     let app = Router::new()
         .route("/", get(password_handler))
-        .with_state(AppState {
-            defaults,
-            length,
-            hash,
-        });
+        .with_state(AppState { defaults, hash });
 
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
@@ -223,7 +209,7 @@ fn main() {
         Mode::Mixed
     };
     let opts = Options {
-        length: cli.length.unwrap_or_else(|| mode.default_length()),
+        length: cli.length,
         separator: if cli.no_separator {
             String::new()
         } else {
@@ -244,7 +230,7 @@ fn main() {
         Some(Command::Serve { host, port }) => {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(serve(&host, port, opts, cli.length, cli.hash));
+                .block_on(serve(&host, port, opts, cli.hash));
         }
         None => {
             for _ in 0..cli.count {

@@ -7,8 +7,8 @@ Generiert zufällige, gut abtippbare Passwörter — als CLI-Tool oder als klein
 Passwörter bestehen aus Groß-/Kleinbuchstaben und Ziffern, dargestellt in Viererblöcken, getrennt durch `.`.
 
 **Beispiele:**
-- `rCJS.2RCX.tAMG` (Standard: 12 Zeichen)
-- `Vr3c.Jt6h.UAK7.6u3J` (16 Zeichen)
+- `Vr3c.Jt6h.UAK7.6u3J` (Standard: 16 Zeichen)
+- `hkwr.tbfm.qvcs.dnpx.Lm7b` (20 Zeichen)
 
 Der Punkt ist nur Darstellung: Die Passwortlänge zählt die Zeichen ohne Trennzeichen. Das Trennzeichen ist frei wählbar (`--separator`) oder lässt sich ganz weglassen (`--no-separator`).
 
@@ -17,12 +17,12 @@ Der Punkt ist nur Darstellung: Die Passwortlänge zählt die Zeichen ohne Trennz
 - `@T7S.gwcW.Tt8x`
 - `cu5fwL#+92jg&!Bx` (strict, ohne Trennzeichen, 16 Zeichen)
 
-**Kleinbuchstaben-Modus** (`--lowercase`): Nur Kleinbuchstaben, dafür 16 Zeichen. Angelehnt an Apples Schlüsselbund-Passwörter: ohne Shift-Taste tippbar, auf jeder Tastatur gleich, und mit 16 Zeichen genauso stark wie 12 gemischte. Auf Wunsch kommt genau ein Großbuchstabe, eine Ziffer und/oder ein Sonderzeichen dazu, damit strenge Richtlinien zufrieden sind.
+**Kleinbuchstaben-Modus** (`--lowercase`): Nur Kleinbuchstaben. Angelehnt an Apples Schlüsselbund-Passwörter: ohne Shift-Taste tippbar, auf jeder Tastatur gleich, und mit 16 Zeichen immer noch rund 71 Bit stark. Auf Wunsch kommt genau ein Großbuchstabe, eine Ziffer und/oder ein Sonderzeichen dazu, damit strenge Richtlinien zufrieden sind.
 
 - `gpdq.hkmr.kdnd.xpdg`
 - `wmd$.hbdg.grji.gGm7` (`--lowercase --upper --digit --special`)
 
-**Alnum-Modus** (`--alnum`): Kleinbuchstaben und Ziffern 0 bis 9, Standardlänge 16. Mindestens ein Buchstabe und eine Ziffer sind garantiert. Auch hier lassen sich genau ein Großbuchstabe und/oder ein Sonderzeichen zuschalten. Mit 16 Zeichen aus 32 sind das rund 80 Bit.
+**Alnum-Modus** (`--alnum`): Kleinbuchstaben und Ziffern 0 bis 9. Mindestens ein Buchstabe und eine Ziffer sind garantiert. Auch hier lassen sich genau ein Großbuchstabe und/oder ein Sonderzeichen zuschalten. Mit 16 Zeichen aus 32 sind das rund 80 Bit.
 
 - `k7hq.3w9m.d2xp.6nvr`
 - `F5t0.+7v7.qk3m.8hbs` (`--alnum --upper --special`)
@@ -63,11 +63,12 @@ Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstabe
 
 | Modus                                   | Zeichen | Vorrat | Entropie |
 |-----------------------------------------|---------|--------|----------|
-| Standard                                | 12      | 52     | ~68 Bit  |
-| Strict                                  | 12      | 63     | ~72 Bit  |
+| Standard                                | 16      | 52     | ~91 Bit  |
+| Strict                                  | 16      | 63     | ~96 Bit  |
 | Kleinbuchstaben                         | 16      | 22     | ~71 Bit  |
 | Kleinbuchstaben, 20 Zeichen             | 20      | 22     | ~89 Bit  |
 | Alnum (Kleinbuchstaben + Ziffern)       | 16      | 32     | ~80 Bit  |
+| Standard, 12 Zeichen                    | 12      | 52     | ~68 Bit  |
 
 Die Extras im Kleinbuchstaben-Modus ändern die Entropie kaum. Alles über 70 Bit ist gegen Online-Angriffe wie gegen Offline-Angriffe auf bcrypt oder Argon2 mehr als ausreichend; der Hebel ist die Länge, ein Block mehr bringt 18 Bit.
 
@@ -97,11 +98,11 @@ Das Binary befindet sich dann in:
 ### CLI
 
 ```bash
-# Ein Passwort mit 12 Zeichen
+# Ein Passwort mit 16 Zeichen
 password-generator
 
-# Fünf Passwörter mit 16 Zeichen
-password-generator -n 5 -l 16
+# Fünf Passwörter mit 20 Zeichen
+password-generator -n 5 -l 20
 
 # Anderes Trennzeichen bzw. keines
 password-generator -s -
@@ -110,12 +111,12 @@ password-generator --no-separator
 # Strict-Modus mit Sonderzeichen
 password-generator -x
 
-# Kleinbuchstaben-Modus (16 Zeichen), wahlweise mit je einem Extra
+# Kleinbuchstaben-Modus, wahlweise mit je einem Extra
 password-generator -w
 password-generator -w --upper --digit --special
 password-generator -w -x                    # dasselbe wie die Zeile darüber
 
-# Alnum-Modus (16 Zeichen aus Kleinbuchstaben und Ziffern), wahlweise mit Großbuchstabe und Sonderzeichen
+# Alnum-Modus (Kleinbuchstaben und Ziffern), wahlweise mit Großbuchstabe und Sonderzeichen
 password-generator -a
 password-generator -a --upper --special
 
@@ -140,11 +141,11 @@ password-generator --hash bcrypt | cut -f2
 ### Webserver
 
 ```bash
-# Mit Default-Einstellungen (127.0.0.1:3000, 12 Zeichen)
+# Mit Default-Einstellungen (127.0.0.1:3000, 16 Zeichen)
 password-generator serve
 
 # Eigenen Host, Port und Standardlänge angeben
-password-generator serve --host 0.0.0.0 --port 8080 --length 16
+password-generator serve --host 0.0.0.0 --port 8080 --length 20
 ```
 
 Sobald der Server läuft:
@@ -180,12 +181,12 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --length <LENGTH>        Länge der Passwörter, Standard 12, 16 mit --lowercase oder --alnum (beim Server per ?length=N überschreibbar)
+  -l, --length <LENGTH>        Länge der Passwörter (beim Server per ?length=N überschreibbar) [default: 16]
   -s, --separator <SEPARATOR>  Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar) [default: .]
       --no-separator           Keine Blöcke, Passwort am Stück ausgeben (entspricht --separator "")
   -x, --strict                 Strict-Modus für strenge Passwortrichtlinien: Sonderzeichen hinzufügen und mindestens eines garantieren; mit --lowercase wie --upper --digit --special, mit --alnum wie --upper --special (Server: ?strict=1)
-  -w, --lowercase              Kleinbuchstaben-Modus: nur Kleinbuchstaben, Standardlänge 16 (beim Server per ?lowercase=1 überschreibbar)
-  -a, --alnum                  Alnum-Modus: Kleinbuchstaben und Ziffern 0-9, Standardlänge 16 (beim Server per ?alnum=1 überschreibbar)
+  -w, --lowercase              Kleinbuchstaben-Modus: nur Kleinbuchstaben (beim Server per ?lowercase=1 überschreibbar)
+  -a, --alnum                  Alnum-Modus: Kleinbuchstaben und Ziffern 0-9 (beim Server per ?alnum=1 überschreibbar)
       --upper                  Genau ein Großbuchstabe, Rest aus dem Grundvorrat (mit --lowercase oder --alnum; Server: ?upper=1)
       --digit                  Genau eine Ziffer, Rest klein (nur mit --lowercase; Server: ?digit=1)
       --special                Genau ein Sonderzeichen, Rest aus dem Grundvorrat (mit --lowercase oder --alnum; Server: ?special=1)

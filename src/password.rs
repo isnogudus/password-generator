@@ -1,12 +1,8 @@
 use rand::Rng;
 use rand::seq::SliceRandom;
 
-/// Standardlänge eines Passworts (Anzahl Zeichen ohne Trennzeichen)
-pub const DEFAULT_LENGTH: usize = 12;
-/// Standardlänge im Kleinbuchstaben-Modus (gleicht den kleineren Vorrat aus)
-pub const DEFAULT_LOWERCASE_LENGTH: usize = 16;
-/// Standardlänge im Alnum-Modus (Kleinbuchstaben und Ziffern)
-pub const DEFAULT_ALNUM_LENGTH: usize = 16;
+/// Standardlänge eines Passworts (Anzahl Zeichen ohne Trennzeichen), in allen Modi
+pub const DEFAULT_LENGTH: usize = 16;
 /// Kürzestes erlaubtes Passwort
 pub const MIN_LENGTH: usize = 4;
 /// Längstes erlaubtes Passwort
@@ -44,17 +40,6 @@ pub enum Mode {
     Lowercase,
     /// Kleinbuchstaben und Ziffern (plus optionale Extras)
     Alnum,
-}
-
-impl Mode {
-    /// Standardlänge für den jeweiligen Modus
-    pub fn default_length(self) -> usize {
-        match self {
-            Mode::Mixed => DEFAULT_LENGTH,
-            Mode::Lowercase => DEFAULT_LOWERCASE_LENGTH,
-            Mode::Alnum => DEFAULT_ALNUM_LENGTH,
-        }
-    }
 }
 
 /// Einstellungen für die Passwort-Erzeugung
@@ -278,10 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn default_length_has_three_blocks() {
+    fn default_length_has_four_blocks() {
         let pw = generate_password(&opts(DEFAULT_LENGTH)).unwrap();
-        assert_eq!(pw.len(), 14);
-        assert_eq!(pw.split('.').count(), 3);
+        assert_eq!(pw.len(), 19);
+        assert_eq!(pw.split('.').count(), 4);
         assert!(pw.split('.').all(|b| b.len() == BLOCK_SIZE));
     }
 
@@ -502,13 +487,6 @@ mod tests {
                 assert!(lower >= 1 && digit >= 1, "{pw}");
             }
         }
-    }
-
-    #[test]
-    fn default_length_per_mode() {
-        assert_eq!(Mode::Mixed.default_length(), 12);
-        assert_eq!(Mode::Lowercase.default_length(), 16);
-        assert_eq!(Mode::Alnum.default_length(), 16);
     }
 
     #[test]
