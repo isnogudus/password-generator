@@ -34,13 +34,18 @@ struct Cli {
 
     /// Kleinbuchstaben-Modus: nur Kleinbuchstaben
     /// (beim Server per ?lowercase=1 überschreibbar)
-    #[arg(short = 'w', long, conflicts_with = "alnum", global = true)]
+    #[arg(short = 'w', long, conflicts_with_all = ["alnum", "digits"], global = true)]
     lowercase: bool,
 
     /// Alnum-Modus: Kleinbuchstaben und Ziffern 0-9
     /// (beim Server per ?alnum=1 überschreibbar)
-    #[arg(short = 'a', long, global = true)]
+    #[arg(short = 'a', long, conflicts_with = "digits", global = true)]
     alnum: bool,
+
+    /// Ziffern-Modus: nur Ziffern 0-9, z.B. für PINs mit -l 4 oder -l 6;
+    /// keine Extras (beim Server per ?digits=1 überschreibbar)
+    #[arg(short = 'd', long, global = true)]
+    digits: bool,
 
     /// Genau ein Großbuchstabe, Rest aus dem Grundvorrat
     /// (mit --lowercase oder --alnum; Server: ?upper=1)
@@ -124,6 +129,7 @@ struct Params {
     strict: Option<String>,
     lowercase: Option<String>,
     alnum: Option<String>,
+    digits: Option<String>,
     upper: Option<String>,
     digit: Option<String>,
     special: Option<String>,
@@ -155,15 +161,34 @@ async fn password_handler(
         .map(|v| parse_flag(&v))
         .transpose()
         .map_err(bad)?;
-    let mode = match (lowercase, alnum) {
-        (Some(true), Some(true)) => {
-            return Err(bad("lowercase und alnum schließen sich aus".to_string()));
+    let digits = params
+        .digits
+        .map(|v| parse_flag(&v))
+        .transpose()
+        .map_err(bad)?;
+    let requested: Vec<Mode> = [
+        (lowercase, Mode::Lowercase),
+        (alnum, Mode::Alnum),
+        (digits, Mode::Digits),
+    ]
+    .into_iter()
+    .filter_map(|(flag, mode)| (flag == Some(true)).then_some(mode))
+    .collect();
+    let switched_off = |flag: Option<bool>, mode: Mode| flag == Some(false) && d.mode == mode;
+    let mode = match requested.as_slice() {
+        [] if switched_off(lowercase, Mode::Lowercase)
+            || switched_off(alnum, Mode::Alnum)
+            || switched_off(digits, Mode::Digits) =>
+        {
+            Mode::Mixed
         }
-        (Some(true), _) => Mode::Lowercase,
-        (_, Some(true)) => Mode::Alnum,
-        (Some(false), _) if d.mode == Mode::Lowercase => Mode::Mixed,
-        (_, Some(false)) if d.mode == Mode::Alnum => Mode::Mixed,
-        _ => d.mode,
+        [] => d.mode,
+        [single] => *single,
+        _ => {
+            return Err(bad(
+                "lowercase, alnum und digits schließen sich aus".to_string()
+            ));
+        }
     };
     // Bei Moduswechsel per Request gelten die Extras aus der Servervorgabe
     // nicht; explizit im Request gesetzte Extras prüft validate().
@@ -205,6 +230,8 @@ fn main() {
         Mode::Lowercase
     } else if cli.alnum {
         Mode::Alnum
+    } else if cli.digits {
+        Mode::Digits
     } else {
         Mode::Mixed
     };

@@ -21,9 +21,9 @@ const LOWER: &[u8] = b"abcdefghijkmnpqrstuvwx";
 const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWX";
 /// Ziffern ohne 0 (ähnlich O) und 1 (ähnlich l/I).
 const DIGITS: &[u8] = b"23456789";
-/// Alle Ziffern für den Alnum-Modus: l und o fehlen dort ohnehin, und die
-/// Großbuchstaben I und O kommen im gesamten Vorrat nicht vor, daher sind
-/// 0 und 1 dort nicht verwechselbar.
+/// Alle Ziffern für den Alnum- und Ziffern-Modus: l und o fehlen bei den
+/// Kleinbuchstaben ohnehin, und die Großbuchstaben I und O kommen im gesamten
+/// Vorrat nicht vor, daher sind 0 und 1 dort nicht verwechselbar.
 const ALL_DIGITS: &[u8] = b"0123456789";
 /// Sonderzeichen für den Strict-Modus: auf QWERTY und QWERTZ vorhanden, von
 /// gängigen Passwortrichtlinien akzeptiert, ohne Quoting-Fallen (`'"\``) und
@@ -40,6 +40,8 @@ pub enum Mode {
     Lowercase,
     /// Kleinbuchstaben und Ziffern (plus optionale Extras)
     Alnum,
+    /// Nur Ziffern, z.B. für PINs; keine Extras, `strict` ohne Wirkung
+    Digits,
 }
 
 /// Einstellungen für die Passwort-Erzeugung
@@ -51,7 +53,7 @@ pub struct Options {
     pub separator: String,
     /// Gemischter Modus: Sonderzeichen hinzufügen und mindestens eines
     /// garantieren. Kleinbuchstaben-/Alnum-Modus: alle dort erlaubten
-    /// Extras zusammen.
+    /// Extras zusammen. Ziffern-Modus: ohne Wirkung.
     pub strict: bool,
     /// Grundvorrat
     pub mode: Mode,
@@ -99,7 +101,7 @@ impl std::fmt::Display for Error {
             Error::ExtraNotAllowed(extra) => write!(
                 f,
                 "{extra} ist in diesem Modus nicht erlaubt: upper und special brauchen \
-                 lowercase oder alnum, digit braucht lowercase"
+                 lowercase oder alnum, digit braucht lowercase, digits erlaubt keine Extras"
             ),
         }
     }
@@ -135,6 +137,8 @@ fn special_without_separator(separator: &str) -> Vec<u8> {
 /// Alnum-Modus: Kleinbuchstaben und Ziffern, garantiert je mindestens eins
 /// von beiden, bis auf genau einen Großbuchstaben bzw. ein Sonderzeichen,
 /// sofern zugeschaltet.
+///
+/// Ziffern-Modus: nur Ziffern, keine Extras.
 ///
 /// Anschließend wird gemischt, damit die Pflichtzeichen keine feste Position haben.
 fn generate_chars<R: Rng>(rng: &mut R, opts: &Options) -> Vec<char> {
@@ -185,6 +189,11 @@ fn generate_chars<R: Rng>(rng: &mut R, opts: &Options) -> Vec<char> {
                 chars.push(random_char(rng, &base));
             }
         }
+        Mode::Digits => {
+            while chars.len() < opts.length {
+                chars.push(random_char(rng, ALL_DIGITS));
+            }
+        }
     }
 
     chars.shuffle(rng);
@@ -213,7 +222,7 @@ pub fn validate(opts: &Options) -> Result<(), Error> {
         return Err(Error::SeparatorTooLong(sep_len));
     }
     match opts.mode {
-        Mode::Mixed => {
+        Mode::Mixed | Mode::Digits => {
             if opts.upper {
                 return Err(Error::ExtraNotAllowed("upper"));
             }
@@ -490,6 +499,25 @@ mod tests {
     }
 
     #[test]
+    fn digits_only() {
+        let o = Options {
+            length: 6,
+            separator: String::new(),
+            mode: Mode::Digits,
+            strict: true, // ohne Wirkung
+            ..Options::default()
+        };
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..300 {
+            let pw = generate_password(&o).unwrap();
+            assert_eq!(pw.len(), 6);
+            assert!(pw.chars().all(|c| c.is_ascii_digit()), "{pw}");
+            seen.extend(pw.chars());
+        }
+        assert_eq!(seen.len(), 10, "nicht alle Ziffern gesehen: {seen:?}");
+    }
+
+    #[test]
     fn extras_only_where_allowed() {
         let o = Options {
             upper: true,
@@ -503,6 +531,15 @@ mod tests {
             ..Options::default()
         };
         assert_eq!(generate_password(&o), Err(Error::ExtraNotAllowed("digit")));
+        let o = Options {
+            mode: Mode::Digits,
+            special: true,
+            ..Options::default()
+        };
+        assert_eq!(
+            generate_password(&o),
+            Err(Error::ExtraNotAllowed("special"))
+        );
     }
 
     #[test]

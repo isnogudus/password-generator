@@ -27,6 +27,12 @@ Der Punkt ist nur Darstellung: Die Passwortlänge zählt die Zeichen ohne Trennz
 - `k7hq.3w9m.d2xp.6nvr`
 - `F5t0.+7v7.qk3m.8hbs` (`--alnum --upper --special`)
 
+**Ziffern-Modus** (`--digits`): Nur Ziffern 0 bis 9, etwa für PINs. Keine Extras, `--strict` hat hier keine Wirkung. Die Länge wie überall mit `-l`, für PINs also `-l 4` oder `-l 6`, meist zusammen mit `--no-separator`.
+
+- `4831` (`--digits -l 4`)
+- `381736` (`--digits -l 6 --no-separator`)
+- `9094.4367` (`--digits -l 8`)
+
 **Hashes** (`--hash`): Auf Wunsch wird zu jedem Passwort gleich der passende Hash ausgegeben, getrennt durch einen Tabulator. Unterstützt werden bcrypt, SHA-512-crypt und Argon2id.
 
 ```
@@ -57,7 +63,7 @@ Im Strict-Modus kommen diese Sonderzeichen hinzu (auf QWERTY und QWERTZ vorhande
 
 Im Alnum-Modus werden alle zehn Ziffern verwendet: `l` und `o` fehlen bei den Kleinbuchstaben ohnehin, und `I` und `O` kommen im gesamten Vorrat nicht vor, daher sind 0 und 1 dort nicht verwechselbar.
 
-Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstaben und eine Ziffer, im Strict-Modus zusätzlich ein Sonderzeichen. Im Kleinbuchstaben-Modus sind alle Zeichen klein, bis auf genau einen Großbuchstaben (`--upper`), eine Ziffer (`--digit`) bzw. ein Sonderzeichen (`--special`), sofern zugeschaltet; `--strict` schaltet dort alle drei zu. Im Alnum-Modus gibt es `--upper` und `--special`, `--strict` schaltet beide zu. Die Position der Pflichtzeichen wird zufällig gemischt. Zeichen, die im Trennzeichen vorkommen, werden aus den Sonderzeichen entfernt, damit Blockgrenze und Inhalt unterscheidbar bleiben.
+Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstaben und eine Ziffer, im Strict-Modus zusätzlich ein Sonderzeichen. Im Kleinbuchstaben-Modus sind alle Zeichen klein, bis auf genau einen Großbuchstaben (`--upper`), eine Ziffer (`--digit`) bzw. ein Sonderzeichen (`--special`), sofern zugeschaltet; `--strict` schaltet dort alle drei zu. Im Alnum-Modus gibt es `--upper` und `--special`, `--strict` schaltet beide zu. Der Ziffern-Modus erlaubt keine Extras. Die Position der Pflichtzeichen wird zufällig gemischt. Zeichen, die im Trennzeichen vorkommen, werden aus den Sonderzeichen entfernt, damit Blockgrenze und Inhalt unterscheidbar bleiben.
 
 ### Entropie
 
@@ -69,6 +75,9 @@ Jedes Passwort enthält garantiert mindestens einen Klein-, einen Großbuchstabe
 | Kleinbuchstaben, 20 Zeichen             | 20      | 22     | ~89 Bit  |
 | Alnum (Kleinbuchstaben + Ziffern)       | 16      | 32     | ~80 Bit  |
 | Standard, 12 Zeichen                    | 12      | 52     | ~68 Bit  |
+| Ziffern, PIN                            | 6       | 10     | ~20 Bit  |
+
+Eine PIN ist nur zusammen mit einer Versuchsbegrenzung sicher, wie sie Geräte und Karten mitbringen.
 
 Die Extras im Kleinbuchstaben-Modus ändern die Entropie kaum. Alles über 70 Bit ist gegen Online-Angriffe wie gegen Offline-Angriffe auf bcrypt oder Argon2 mehr als ausreichend; der Hebel ist die Länge, ein Block mehr bringt 18 Bit.
 
@@ -120,6 +129,9 @@ password-generator -w -x                    # dasselbe wie die Zeile darüber
 password-generator -a
 password-generator -a --upper --special
 
+# Ziffern-Modus, z.B. 6-stellige PIN am Stück
+password-generator -d -l 6 --no-separator
+
 # Passwort und Hash (bcrypt, sha512-crypt oder argon2id)
 password-generator --hash bcrypt
 ```
@@ -164,10 +176,11 @@ curl 'http://127.0.0.1:3000/?separator='          # ohne Trennzeichen
 curl 'http://127.0.0.1:3000/?strict=1'
 curl 'http://127.0.0.1:3000/?lowercase=1&digit=1'
 curl 'http://127.0.0.1:3000/?alnum=1&upper=1'
+curl 'http://127.0.0.1:3000/?digits=1&length=6&separator='   # PIN
 curl 'http://127.0.0.1:3000/?hash=bcrypt'         # Passwort<TAB>Hash
 ```
 
-Die Query-Parameter `length`, `separator`, `strict`, `lowercase`, `alnum`, `upper`, `digit`, `special` und `hash` überschreiben die beim Start gesetzten Standardwerte. Für die Schalter gelten `1`, `true`, `yes`, `on` oder ein leerer Wert (`?strict`) als wahr. Jeder Request generiert ein neues, zufälliges Passwort. Ungültige Werte (Länge außerhalb 4 bis 128, Trennzeichen länger als 8 Zeichen) beantwortet der Server mit `400 Bad Request`.
+Die Query-Parameter `length`, `separator`, `strict`, `lowercase`, `alnum`, `digits`, `upper`, `digit`, `special` und `hash` überschreiben die beim Start gesetzten Standardwerte. Für die Schalter gelten `1`, `true`, `yes`, `on` oder ein leerer Wert (`?strict`) als wahr. Jeder Request generiert ein neues, zufälliges Passwort. Ungültige Werte (Länge außerhalb 4 bis 128, Trennzeichen länger als 8 Zeichen) beantwortet der Server mit `400 Bad Request`.
 
 ### CLI-Optionen
 
@@ -187,6 +200,7 @@ Options:
   -x, --strict                 Strict-Modus für strenge Passwortrichtlinien: Sonderzeichen hinzufügen und mindestens eines garantieren; mit --lowercase wie --upper --digit --special, mit --alnum wie --upper --special (Server: ?strict=1)
   -w, --lowercase              Kleinbuchstaben-Modus: nur Kleinbuchstaben (beim Server per ?lowercase=1 überschreibbar)
   -a, --alnum                  Alnum-Modus: Kleinbuchstaben und Ziffern 0-9 (beim Server per ?alnum=1 überschreibbar)
+  -d, --digits                 Ziffern-Modus: nur Ziffern 0-9, z.B. für PINs mit -l 4 oder -l 6; keine Extras (beim Server per ?digits=1 überschreibbar)
       --upper                  Genau ein Großbuchstabe, Rest aus dem Grundvorrat (mit --lowercase oder --alnum; Server: ?upper=1)
       --digit                  Genau eine Ziffer, Rest klein (nur mit --lowercase; Server: ?digit=1)
       --special                Genau ein Sonderzeichen, Rest aus dem Grundvorrat (mit --lowercase oder --alnum; Server: ?special=1)
@@ -203,7 +217,7 @@ Options:
   -H, --host <HOST>            Host-Adresse, auf der der Server lauscht [default: 127.0.0.1]
   -p, --port <PORT>            Port, auf dem der Server lauscht [default: 3000]
   -l, --length, -s, --separator, --no-separator, -x, --strict,
-  -w, --lowercase, -a, --alnum, --upper, --digit, --special, --hash
+  -w, --lowercase, -a, --alnum, -d, --digits, --upper, --digit, --special, --hash
                                wie oben, setzen die Standardwerte des Servers
 ```
 
