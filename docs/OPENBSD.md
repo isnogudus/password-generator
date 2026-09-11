@@ -151,17 +151,17 @@ OpenBSD verwendet für `passwd` und `htpasswd` bcrypt. Der Generator liefert
 das passende Format direkt mit:
 
 ```sh
-password-generator --hash bcrypt
+password-generator --hash=bcrypt
 ```
 
 Die Ausgabe ist `<passwort>	<hash>` (Tabulator). Beispiele:
 
 ```sh
 # Passwort für einen Systembenutzer setzen (Hash aus der zweiten Spalte)
-doas usermod -p "$(password-generator --hash bcrypt | tee /dev/tty | cut -f2)" benutzer
+doas usermod -p "$(password-generator --hash=bcrypt | tee /dev/tty | cut -f2)" benutzer
 
 # Eintrag für Caddy basic_auth
-password-generator --hash bcrypt
+password-generator --hash=bcrypt
 ```
 
 Für Caddy den Hash in die Caddyfile übernehmen:

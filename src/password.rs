@@ -1,7 +1,7 @@
 use rand::Rng;
 use rand::seq::SliceRandom;
 
-/// Standardlänge eines Passworts (Anzahl Zeichen ohne Trennzeichen), in allen Modi
+/// Standardlänge eines Passworts (Anzahl Zeichen ohne Trennzeichen)
 pub const DEFAULT_LENGTH: usize = 16;
 /// Kürzestes erlaubtes Passwort
 pub const MIN_LENGTH: usize = 4;
@@ -16,32 +16,88 @@ pub const MAX_SEPARATOR_LEN: usize = 8;
 
 /// Kleinbuchstaben ohne leicht verwechselbare Zeichen (l, o) und ohne y/z
 /// (auf QWERTY- und QWERTZ-Tastaturen vertauscht).
-const LOWER: &[u8] = b"abcdefghijkmnpqrstuvwx";
+pub const LOWER: &str = "abcdefghijkmnpqrstuvwx";
 /// Großbuchstaben ohne leicht verwechselbare Zeichen (I, O) und ohne Y/Z.
-const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWX";
-/// Ziffern ohne 0 (ähnlich O) und 1 (ähnlich l/I).
-const DIGITS: &[u8] = b"23456789";
-/// Alle Ziffern für den Alnum- und Ziffern-Modus: l und o fehlen bei den
-/// Kleinbuchstaben ohnehin, und die Großbuchstaben I und O kommen im gesamten
-/// Vorrat nicht vor, daher sind 0 und 1 dort nicht verwechselbar.
-const ALL_DIGITS: &[u8] = b"0123456789";
-/// Sonderzeichen für den Strict-Modus: auf QWERTY und QWERTZ vorhanden, von
-/// gängigen Passwortrichtlinien akzeptiert, ohne Quoting-Fallen (`'"\``) und
-/// ohne verwechselbare Zeichen (`|`).
-const SPECIAL: &[u8] = b"!#$%&*+=?@_";
+pub const UPPER: &str = "ABCDEFGHJKLMNPQRSTUVWX";
+/// Alle Ziffern: da l, o, I und O in keinem Vorrat vorkommen, sind 0 und 1
+/// nicht verwechselbar.
+pub const DIGITS: &str = "0123456789";
+/// Sonderzeichen: auf QWERTY und QWERTZ vorhanden, von gängigen
+/// Passwortrichtlinien akzeptiert, ohne Quoting-Fallen (`'"\``) und ohne
+/// verwechselbare Zeichen (`|`).
+pub const SPECIAL: &str = "!#$%&*+=?@_";
 
-/// Grundvorrat des Passworts
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Mode {
-    /// Klein-, Großbuchstaben und Ziffern gemischt
-    #[default]
-    Mixed,
-    /// Nur Kleinbuchstaben (plus optionale Extras)
-    Lowercase,
-    /// Kleinbuchstaben und Ziffern (plus optionale Extras)
-    Alnum,
-    /// Nur Ziffern, z.B. für PINs; keine Extras, `strict` ohne Wirkung
+/// Zeichenklasse
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Class {
+    Lower,
+    Upper,
     Digits,
+    Special,
+}
+
+impl Class {
+    /// Alle Klassen in fester Reihenfolge
+    pub const ALL: [Class; 4] = [Class::Lower, Class::Upper, Class::Digits, Class::Special];
+
+    /// Name der Klasse, wie er in Optionen und Fehlermeldungen auftaucht
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Lower => "lower",
+            Class::Upper => "upper",
+            Class::Digits => "digits",
+            Class::Special => "special",
+        }
+    }
+}
+
+/// Eine Auswahl von Zeichenklassen
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Classes {
+    pub lower: bool,
+    pub upper: bool,
+    pub digits: bool,
+    pub special: bool,
+}
+
+impl Classes {
+    /// Grundvorrat, wenn keine Klasse angegeben ist: Klein-, Großbuchstaben und Ziffern
+    pub const DEFAULT: Classes = Classes {
+        lower: true,
+        upper: true,
+        digits: true,
+        special: false,
+    };
+
+    /// Keine Klasse gewählt
+    pub fn is_empty(self) -> bool {
+        !(self.lower || self.upper || self.digits || self.special)
+    }
+
+    /// Ist die Klasse enthalten
+    pub fn contains(self, class: Class) -> bool {
+        match class {
+            Class::Lower => self.lower,
+            Class::Upper => self.upper,
+            Class::Digits => self.digits,
+            Class::Special => self.special,
+        }
+    }
+
+    /// Klasse setzen oder entfernen
+    pub fn set(&mut self, class: Class, on: bool) {
+        match class {
+            Class::Lower => self.lower = on,
+            Class::Upper => self.upper = on,
+            Class::Digits => self.digits = on,
+            Class::Special => self.special = on,
+        }
+    }
+
+    /// Enthaltene Klassen in fester Reihenfolge
+    pub fn iter(self) -> impl Iterator<Item = Class> {
+        Class::ALL.into_iter().filter(move |c| self.contains(*c))
+    }
 }
 
 /// Einstellungen für die Passwort-Erzeugung
@@ -51,18 +107,14 @@ pub struct Options {
     pub length: usize,
     /// Trennzeichen zwischen den Viererblöcken; leer = keine Blöcke
     pub separator: String,
-    /// Gemischter Modus: Sonderzeichen hinzufügen und mindestens eines
-    /// garantieren. Kleinbuchstaben-/Alnum-Modus: alle dort erlaubten
-    /// Extras zusammen. Ziffern-Modus: ohne Wirkung.
+    /// Grundvorrat; leer bedeutet `Classes::DEFAULT`. Von jeder enthaltenen
+    /// Klasse ist mindestens ein Zeichen garantiert.
+    pub base: Classes,
+    /// Extras: genau ein Zeichen aus dieser Klasse; nur für Klassen, die
+    /// nicht im Grundvorrat sind
+    pub one: Classes,
+    /// Genau ein Zeichen aus jeder Klasse, die nicht im Grundvorrat ist
     pub strict: bool,
-    /// Grundvorrat
-    pub mode: Mode,
-    /// Extra: genau ein Großbuchstabe (Kleinbuchstaben- und Alnum-Modus)
-    pub upper: bool,
-    /// Extra: genau eine Ziffer (nur Kleinbuchstaben-Modus)
-    pub digit: bool,
-    /// Extra: genau ein Sonderzeichen (Kleinbuchstaben- und Alnum-Modus)
-    pub special: bool,
 }
 
 impl Default for Options {
@@ -70,12 +122,35 @@ impl Default for Options {
         Self {
             length: DEFAULT_LENGTH,
             separator: DEFAULT_SEPARATOR.to_string(),
+            base: Classes::default(),
+            one: Classes::default(),
             strict: false,
-            mode: Mode::Mixed,
-            upper: false,
-            digit: false,
-            special: false,
         }
+    }
+}
+
+impl Options {
+    /// Tatsächlicher Grundvorrat (leer -> Standard)
+    pub fn effective_base(&self) -> Classes {
+        if self.base.is_empty() {
+            Classes::DEFAULT
+        } else {
+            self.base
+        }
+    }
+
+    /// Tatsächliche Extras: explizite plus, bei `strict`, alle fehlenden Klassen
+    pub fn effective_one(&self) -> Classes {
+        let base = self.effective_base();
+        let mut one = self.one;
+        if self.strict {
+            for class in Class::ALL {
+                if !base.contains(class) {
+                    one.set(class, true);
+                }
+            }
+        }
+        one
     }
 }
 
@@ -84,7 +159,8 @@ impl Default for Options {
 pub enum Error {
     InvalidLength(usize),
     SeparatorTooLong(usize),
-    ExtraNotAllowed(&'static str),
+    /// Extra für eine Klasse, die bereits im Grundvorrat ist
+    OneInBase(Class),
 }
 
 impl std::fmt::Display for Error {
@@ -98,10 +174,11 @@ impl std::fmt::Display for Error {
                 f,
                 "Trennzeichen zu lang ({n}): erlaubt sind höchstens {MAX_SEPARATOR_LEN} Zeichen"
             ),
-            Error::ExtraNotAllowed(extra) => write!(
+            Error::OneInBase(class) => write!(
                 f,
-                "{extra} ist in diesem Modus nicht erlaubt: upper und special brauchen \
-                 lowercase oder alnum, digit braucht lowercase, digits erlaubt keine Extras"
+                "one-{} ist überflüssig: {} ist bereits im Grundvorrat",
+                class.name().trim_end_matches('s'),
+                class.name()
             ),
         }
     }
@@ -109,93 +186,46 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Gibt ein zufälliges Zeichen aus dem angegebenen Alphabet zurück
-fn random_char<R: Rng>(rng: &mut R, alphabet: &[u8]) -> char {
-    alphabet[rng.gen_range(0..alphabet.len())] as char
-}
-
-/// Sonderzeichen ohne die Zeichen, die auch im Trennzeichen vorkommen, damit
-/// Blockgrenze und Inhalt unterscheidbar bleiben.
-fn special_without_separator(separator: &str) -> Vec<u8> {
-    SPECIAL
-        .iter()
-        .copied()
-        .filter(|c| !separator.contains(*c as char))
-        .collect()
-}
-
-/// Erzeugt die rohen Passwortzeichen (ohne Trennzeichen).
-///
-/// Gemischter Modus: garantiert je mindestens ein Klein-, ein Großbuchstabe
-/// und eine Ziffer, im Strict-Modus zusätzlich ein Sonderzeichen; die
-/// restlichen Zeichen kommen aus dem Gesamtalphabet.
-///
-/// Kleinbuchstaben-Modus: alle Zeichen sind Kleinbuchstaben, bis auf genau
-/// einen Großbuchstaben, eine Ziffer bzw. ein Sonderzeichen, sofern
-/// zugeschaltet.
-///
-/// Alnum-Modus: Kleinbuchstaben und Ziffern, garantiert je mindestens eins
-/// von beiden, bis auf genau einen Großbuchstaben bzw. ein Sonderzeichen,
-/// sofern zugeschaltet.
-///
-/// Ziffern-Modus: nur Ziffern, keine Extras.
-///
-/// Anschließend wird gemischt, damit die Pflichtzeichen keine feste Position haben.
-fn generate_chars<R: Rng>(rng: &mut R, opts: &Options) -> Vec<char> {
-    let special = special_without_separator(&opts.separator);
-    let mut chars: Vec<char> = Vec::with_capacity(opts.length);
-
-    match opts.mode {
-        Mode::Mixed => {
-            let mut all: Vec<u8> = [LOWER, UPPER, DIGITS].concat();
-            if opts.strict {
-                all.extend_from_slice(&special);
-            }
-            chars.push(random_char(rng, LOWER));
-            chars.push(random_char(rng, UPPER));
-            chars.push(random_char(rng, DIGITS));
-            if opts.strict {
-                chars.push(random_char(rng, &special));
-            }
-            while chars.len() < opts.length {
-                chars.push(random_char(rng, &all));
-            }
-        }
-        Mode::Lowercase => {
-            if opts.upper || opts.strict {
-                chars.push(random_char(rng, UPPER));
-            }
-            if opts.digit || opts.strict {
-                chars.push(random_char(rng, DIGITS));
-            }
-            if opts.special || opts.strict {
-                chars.push(random_char(rng, &special));
-            }
-            while chars.len() < opts.length {
-                chars.push(random_char(rng, LOWER));
-            }
-        }
-        Mode::Alnum => {
-            let base: Vec<u8> = [LOWER, ALL_DIGITS].concat();
-            if opts.upper || opts.strict {
-                chars.push(random_char(rng, UPPER));
-            }
-            if opts.special || opts.strict {
-                chars.push(random_char(rng, &special));
-            }
-            chars.push(random_char(rng, LOWER));
-            chars.push(random_char(rng, ALL_DIGITS));
-            while chars.len() < opts.length {
-                chars.push(random_char(rng, &base));
-            }
-        }
-        Mode::Digits => {
-            while chars.len() < opts.length {
-                chars.push(random_char(rng, ALL_DIGITS));
-            }
-        }
+/// Zeichenvorrat einer Klasse; Sonderzeichen ohne die Zeichen des
+/// Trennzeichens, damit Blockgrenze und Inhalt unterscheidbar bleiben.
+fn alphabet(class: Class, separator: &str) -> Vec<char> {
+    match class {
+        Class::Lower => LOWER.chars().collect(),
+        Class::Upper => UPPER.chars().collect(),
+        Class::Digits => DIGITS.chars().collect(),
+        Class::Special => SPECIAL
+            .chars()
+            .filter(|c| !separator.contains(*c))
+            .collect(),
     }
+}
 
+/// Gibt ein zufälliges Zeichen aus dem angegebenen Alphabet zurück
+fn random_char<R: Rng>(rng: &mut R, alphabet: &[char]) -> char {
+    alphabet[rng.gen_range(0..alphabet.len())]
+}
+
+/// Erzeugt die rohen Passwortzeichen (ohne Trennzeichen): je ein Pflichtzeichen
+/// pro Klasse des Grundvorrats und pro Extra, der Rest zufällig aus dem
+/// Grundvorrat. Anschließend wird gemischt, damit die Pflichtzeichen keine
+/// feste Position haben.
+fn generate_chars<R: Rng>(rng: &mut R, opts: &Options) -> Vec<char> {
+    let base = opts.effective_base();
+    let one = opts.effective_one();
+
+    let mut chars: Vec<char> = Vec::with_capacity(opts.length);
+    let mut pool: Vec<char> = Vec::new();
+    for class in base.iter() {
+        let alpha = alphabet(class, &opts.separator);
+        chars.push(random_char(rng, &alpha));
+        pool.extend(alpha);
+    }
+    for class in one.iter() {
+        chars.push(random_char(rng, &alphabet(class, &opts.separator)));
+    }
+    while chars.len() < opts.length {
+        chars.push(random_char(rng, &pool));
+    }
     chars.shuffle(rng);
     chars
 }
@@ -221,29 +251,14 @@ pub fn validate(opts: &Options) -> Result<(), Error> {
     if sep_len > MAX_SEPARATOR_LEN {
         return Err(Error::SeparatorTooLong(sep_len));
     }
-    match opts.mode {
-        Mode::Mixed | Mode::Digits => {
-            if opts.upper {
-                return Err(Error::ExtraNotAllowed("upper"));
-            }
-            if opts.digit {
-                return Err(Error::ExtraNotAllowed("digit"));
-            }
-            if opts.special {
-                return Err(Error::ExtraNotAllowed("special"));
-            }
-        }
-        Mode::Alnum => {
-            if opts.digit {
-                return Err(Error::ExtraNotAllowed("digit"));
-            }
-        }
-        Mode::Lowercase => {}
+    let base = opts.effective_base();
+    if let Some(class) = opts.one.iter().find(|c| base.contains(*c)) {
+        return Err(Error::OneInBase(class));
     }
     Ok(())
 }
 
-/// Erzeugt ein zufälliges Passwort gemäß `opts`, z.B. `aB3d.Ef7g.H9jk`
+/// Erzeugt ein zufälliges Passwort gemäß `opts`, z.B. `aB3d.Ef7g.H9jk.Lm2n`
 pub fn generate_password(opts: &Options) -> Result<String, Error> {
     validate(opts)?;
     let mut rng = rand::thread_rng();
@@ -257,23 +272,38 @@ pub fn generate_password(opts: &Options) -> Result<String, Error> {
 mod tests {
     use super::*;
 
-    fn opts(length: usize) -> Options {
-        Options {
-            length,
-            ..Options::default()
+    fn classes(lower: bool, upper: bool, digits: bool, special: bool) -> Classes {
+        Classes {
+            lower,
+            upper,
+            digits,
+            special,
         }
     }
 
-    fn strip(password: &str, separator: &str) -> String {
-        if separator.is_empty() {
-            return password.to_string();
+    fn raw(base: Classes, one: Classes, strict: bool, length: usize) -> Options {
+        Options {
+            length,
+            separator: String::new(),
+            base,
+            one,
+            strict,
         }
-        password.replace(separator, "")
+    }
+
+    /// Anzahl Zeichen je Klasse (lower, upper, digits, special)
+    fn count(pw: &str) -> (usize, usize, usize, usize) {
+        (
+            pw.chars().filter(|c| LOWER.contains(*c)).count(),
+            pw.chars().filter(|c| UPPER.contains(*c)).count(),
+            pw.chars().filter(|c| DIGITS.contains(*c)).count(),
+            pw.chars().filter(|c| SPECIAL.contains(*c)).count(),
+        )
     }
 
     #[test]
     fn default_length_has_four_blocks() {
-        let pw = generate_password(&opts(DEFAULT_LENGTH)).unwrap();
+        let pw = generate_password(&Options::default()).unwrap();
         assert_eq!(pw.len(), 19);
         assert_eq!(pw.split('.').count(), 4);
         assert!(pw.split('.').all(|b| b.len() == BLOCK_SIZE));
@@ -281,11 +311,14 @@ mod tests {
 
     #[test]
     fn odd_length_has_short_last_block() {
-        let pw = generate_password(&opts(10)).unwrap();
+        let o = Options {
+            length: 10,
+            ..Options::default()
+        };
+        let pw = generate_password(&o).unwrap();
         let blocks: Vec<&str> = pw.split('.').collect();
         assert_eq!(blocks.len(), 3);
         assert_eq!(blocks[2].len(), 2);
-        assert_eq!(strip(&pw, ".").len(), 10);
     }
 
     #[test]
@@ -293,7 +326,6 @@ mod tests {
         let o = Options {
             length: 8,
             separator: "--".to_string(),
-            strict: false,
             ..Options::default()
         };
         let pw = generate_password(&o).unwrap();
@@ -303,69 +335,142 @@ mod tests {
 
     #[test]
     fn empty_separator_has_no_blocks() {
-        let o = Options {
-            length: 12,
-            separator: String::new(),
-            strict: false,
-            ..Options::default()
-        };
-        let pw = generate_password(&o).unwrap();
+        let pw =
+            generate_password(&raw(Classes::default(), Classes::default(), false, 12)).unwrap();
         assert_eq!(pw.len(), 12);
         assert!(pw.chars().all(|c| c.is_ascii_alphanumeric()));
     }
 
     #[test]
+    fn default_base_is_lower_upper_digits_each_at_least_once() {
+        for _ in 0..300 {
+            let pw =
+                generate_password(&raw(Classes::default(), Classes::default(), false, 4)).unwrap();
+            let (l, u, d, s) = count(&pw);
+            assert!(l >= 1 && u >= 1 && d >= 1 && s == 0, "{pw}");
+            assert_eq!(l + u + d, 4, "{pw}");
+        }
+    }
+
+    #[test]
     fn excludes_ambiguous_and_yz() {
-        let forbidden = "0O1lIyzYZ";
-        for _ in 0..500 {
-            let pw = strip(&generate_password(&opts(32)).unwrap(), ".");
+        let forbidden = "OoIlyzYZ";
+        let o = raw(
+            classes(true, true, true, true),
+            Classes::default(),
+            false,
+            64,
+        );
+        for _ in 0..300 {
+            let pw = generate_password(&o).unwrap();
             assert!(
                 !pw.chars().any(|c| forbidden.contains(c)),
                 "verbotenes Zeichen in {pw}"
             );
-            assert!(pw.chars().all(|c| c.is_ascii_alphanumeric()));
         }
     }
 
     #[test]
-    fn contains_each_class() {
-        for _ in 0..200 {
-            let pw = strip(&generate_password(&opts(MIN_LENGTH)).unwrap(), ".");
-            assert!(pw.chars().any(|c| c.is_ascii_lowercase()), "{pw}");
-            assert!(pw.chars().any(|c| c.is_ascii_uppercase()), "{pw}");
-            assert!(pw.chars().any(|c| c.is_ascii_digit()), "{pw}");
+    fn single_classes() {
+        let cases: [(Classes, &str); 4] = [
+            (classes(true, false, false, false), LOWER),
+            (classes(false, true, false, false), UPPER),
+            (classes(false, false, true, false), DIGITS),
+            (classes(false, false, false, true), SPECIAL),
+        ];
+        for (base, alphabet) in cases {
+            let o = raw(base, Classes::default(), false, 16);
+            for _ in 0..100 {
+                let pw = generate_password(&o).unwrap();
+                assert!(pw.chars().all(|c| alphabet.contains(c)), "{pw}");
+            }
         }
     }
 
     #[test]
-    fn strict_contains_special_and_all_classes() {
-        let o = Options {
-            length: MIN_LENGTH,
-            separator: String::new(),
-            strict: true,
-            ..Options::default()
-        };
-        let special: Vec<char> = SPECIAL.iter().map(|c| *c as char).collect();
-        for _ in 0..200 {
+    fn combined_base_guarantees_each_class() {
+        let o = raw(
+            classes(true, false, true, false),
+            Classes::default(),
+            false,
+            4,
+        );
+        for _ in 0..300 {
             let pw = generate_password(&o).unwrap();
-            assert!(pw.chars().any(|c| c.is_ascii_lowercase()), "{pw}");
-            assert!(pw.chars().any(|c| c.is_ascii_uppercase()), "{pw}");
-            assert!(pw.chars().any(|c| c.is_ascii_digit()), "{pw}");
-            assert!(pw.chars().any(|c| special.contains(&c)), "{pw}");
-            assert!(
-                pw.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || special.contains(&c)),
-                "{pw}"
-            );
+            let (l, u, d, s) = count(&pw);
+            assert!(l >= 1 && d >= 1, "{pw}");
+            assert_eq!((u, s), (0, 0), "{pw}");
         }
     }
 
     #[test]
-    fn strict_never_uses_separator_char() {
+    fn digits_use_all_ten() {
+        let o = raw(
+            classes(false, false, true, false),
+            Classes::default(),
+            false,
+            6,
+        );
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..300 {
+            seen.extend(generate_password(&o).unwrap().chars());
+        }
+        assert_eq!(seen.len(), 10, "{seen:?}");
+    }
+
+    #[test]
+    fn one_extras_are_exactly_one() {
+        let base = classes(true, false, false, false);
+        let cases = [
+            (classes(false, true, false, false), (15, 1, 0, 0)),
+            (classes(false, false, true, false), (15, 0, 1, 0)),
+            (classes(false, false, false, true), (15, 0, 0, 1)),
+            (classes(false, true, true, true), (13, 1, 1, 1)),
+        ];
+        for (one, expected) in cases {
+            let o = raw(base, one, false, 16);
+            for _ in 0..100 {
+                let pw = generate_password(&o).unwrap();
+                assert_eq!(count(&pw), expected, "{pw}");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_adds_one_of_each_missing_class() {
+        // Standard: nur Sonderzeichen fehlt
+        let o = raw(Classes::default(), Classes::default(), true, 16);
+        for _ in 0..100 {
+            let pw = generate_password(&o).unwrap();
+            let (l, u, d, s) = count(&pw);
+            assert_eq!(s, 1, "{pw}");
+            assert!(l >= 1 && u >= 1 && d >= 1, "{pw}");
+        }
+        // Nur Ziffern: drei Klassen fehlen
+        let o = raw(
+            classes(false, false, true, false),
+            Classes::default(),
+            true,
+            4,
+        );
+        for _ in 0..100 {
+            let pw = generate_password(&o).unwrap();
+            assert_eq!(count(&pw), (1, 1, 1, 1), "{pw}");
+        }
+        // Alles im Grundvorrat: strict ohne Wirkung
+        let o = raw(classes(true, true, true, true), Classes::default(), true, 4);
+        for _ in 0..100 {
+            let pw = generate_password(&o).unwrap();
+            assert_eq!(count(&pw), (1, 1, 1, 1), "{pw}");
+        }
+    }
+
+    #[test]
+    fn special_never_uses_separator_char() {
         let o = Options {
             length: 64,
             separator: "_".to_string(),
-            strict: true,
+            base: classes(false, false, false, true),
             ..Options::default()
         };
         for _ in 0..100 {
@@ -375,192 +480,40 @@ mod tests {
         }
     }
 
-    fn count_classes(pw: &str) -> (usize, usize, usize, usize) {
-        let special: Vec<char> = SPECIAL.iter().map(|c| *c as char).collect();
-        (
-            pw.chars().filter(|c| c.is_ascii_lowercase()).count(),
-            pw.chars().filter(|c| c.is_ascii_uppercase()).count(),
-            pw.chars().filter(|c| c.is_ascii_digit()).count(),
-            pw.chars().filter(|c| special.contains(c)).count(),
-        )
+    #[test]
+    fn one_in_base_is_rejected() {
+        let o = raw(
+            classes(true, false, true, false),
+            classes(false, false, true, false),
+            false,
+            16,
+        );
+        assert_eq!(generate_password(&o), Err(Error::OneInBase(Class::Digits)));
+        // auch gegen den impliziten Standard
+        let o = raw(
+            Classes::default(),
+            classes(false, true, false, false),
+            false,
+            16,
+        );
+        assert_eq!(generate_password(&o), Err(Error::OneInBase(Class::Upper)));
     }
 
     #[test]
-    fn lowercase_only() {
-        let o = Options {
-            length: 16,
-            separator: String::new(),
-            mode: Mode::Lowercase,
-            ..Options::default()
-        };
-        for _ in 0..200 {
-            let pw = generate_password(&o).unwrap();
-            assert_eq!(pw.len(), 16);
-            assert_eq!(count_classes(&pw), (16, 0, 0, 0), "{pw}");
-            assert!(!pw.chars().any(|c| "loyz".contains(c)), "{pw}");
-        }
-    }
-
-    #[test]
-    fn lowercase_with_single_extras() {
-        let base = Options {
-            length: 16,
-            separator: String::new(),
-            mode: Mode::Lowercase,
-            ..Options::default()
-        };
-        let cases = [
-            (true, false, false, (15, 1, 0, 0)),
-            (false, true, false, (15, 0, 1, 0)),
-            (false, false, true, (15, 0, 0, 1)),
-            (true, true, true, (13, 1, 1, 1)),
-        ];
-        for (upper, digit, special, expected) in cases {
+    fn rejects_invalid_length_and_separator() {
+        for n in [0, MIN_LENGTH - 1, MAX_LENGTH + 1] {
             let o = Options {
-                upper,
-                digit,
-                special,
-                ..base.clone()
+                length: n,
+                ..Options::default()
             };
-            for _ in 0..100 {
-                let pw = generate_password(&o).unwrap();
-                assert_eq!(count_classes(&pw), expected, "{pw}");
-            }
+            assert_eq!(generate_password(&o), Err(Error::InvalidLength(n)));
         }
-    }
-
-    #[test]
-    fn lowercase_strict_equals_all_extras() {
         let o = Options {
-            length: MIN_LENGTH,
-            separator: String::new(),
-            mode: Mode::Lowercase,
-            strict: true,
-            ..Options::default()
-        };
-        for _ in 0..100 {
-            let pw = generate_password(&o).unwrap();
-            assert_eq!(count_classes(&pw), (1, 1, 1, 1), "{pw}");
-        }
-    }
-
-    #[test]
-    fn alnum_uses_lowercase_and_all_ten_digits() {
-        let o = Options {
-            length: 8,
-            separator: String::new(),
-            mode: Mode::Alnum,
-            ..Options::default()
-        };
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..300 {
-            let pw = generate_password(&o).unwrap();
-            assert_eq!(pw.len(), 8);
-            let (lower, upper, digit, special) = count_classes(&pw);
-            assert_eq!(lower + digit, 8, "{pw}");
-            assert_eq!((upper, special), (0, 0), "{pw}");
-            assert!(lower >= 1 && digit >= 1, "{pw}");
-            assert!(!pw.chars().any(|c| "loyz".contains(c)), "{pw}");
-            seen.extend(pw.chars());
-        }
-        assert!(seen.contains(&'0') && seen.contains(&'1'), "0 und 1 fehlen");
-    }
-
-    #[test]
-    fn alnum_with_extras() {
-        let base = Options {
-            length: 8,
-            separator: String::new(),
-            mode: Mode::Alnum,
-            ..Options::default()
-        };
-        // (upper, special, strict) -> erwartete Anzahl Groß- und Sonderzeichen
-        let cases = [
-            (true, false, false, (1, 0)),
-            (false, true, false, (0, 1)),
-            (true, true, false, (1, 1)),
-            (false, false, true, (1, 1)),
-        ];
-        for (upper, special, strict, (want_upper, want_special)) in cases {
-            let o = Options {
-                upper,
-                special,
-                strict,
-                ..base.clone()
-            };
-            for _ in 0..100 {
-                let pw = generate_password(&o).unwrap();
-                let (lower, got_upper, digit, got_special) = count_classes(&pw);
-                assert_eq!((got_upper, got_special), (want_upper, want_special), "{pw}");
-                assert_eq!(lower + digit + got_upper + got_special, 8, "{pw}");
-                assert!(lower >= 1 && digit >= 1, "{pw}");
-            }
-        }
-    }
-
-    #[test]
-    fn digits_only() {
-        let o = Options {
-            length: 6,
-            separator: String::new(),
-            mode: Mode::Digits,
-            strict: true, // ohne Wirkung
-            ..Options::default()
-        };
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..300 {
-            let pw = generate_password(&o).unwrap();
-            assert_eq!(pw.len(), 6);
-            assert!(pw.chars().all(|c| c.is_ascii_digit()), "{pw}");
-            seen.extend(pw.chars());
-        }
-        assert_eq!(seen.len(), 10, "nicht alle Ziffern gesehen: {seen:?}");
-    }
-
-    #[test]
-    fn extras_only_where_allowed() {
-        let o = Options {
-            upper: true,
-            ..Options::default()
-        };
-        assert_eq!(generate_password(&o), Err(Error::ExtraNotAllowed("upper")));
-        let o = Options {
-            mode: Mode::Alnum,
-            digit: true,
-            length: 8,
-            ..Options::default()
-        };
-        assert_eq!(generate_password(&o), Err(Error::ExtraNotAllowed("digit")));
-        let o = Options {
-            mode: Mode::Digits,
-            special: true,
-            ..Options::default()
-        };
-        assert_eq!(
-            generate_password(&o),
-            Err(Error::ExtraNotAllowed("special"))
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_options() {
-        assert_eq!(generate_password(&opts(0)), Err(Error::InvalidLength(0)));
-        assert_eq!(
-            generate_password(&opts(MIN_LENGTH - 1)),
-            Err(Error::InvalidLength(3))
-        );
-        assert_eq!(
-            generate_password(&opts(MAX_LENGTH + 1)),
-            Err(Error::InvalidLength(129))
-        );
-        assert!(generate_password(&opts(MAX_LENGTH)).is_ok());
-
-        let long_sep = Options {
             separator: "-".repeat(MAX_SEPARATOR_LEN + 1),
             ..Options::default()
         };
         assert_eq!(
-            generate_password(&long_sep),
+            generate_password(&o),
             Err(Error::SeparatorTooLong(MAX_SEPARATOR_LEN + 1))
         );
     }

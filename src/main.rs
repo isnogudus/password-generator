@@ -2,10 +2,11 @@ mod hash;
 mod password;
 
 use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use hash::Algorithm;
 use password::{
-    DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Mode, Options, generate_password,
+    Class, Classes, DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options,
+    generate_password,
 };
 use serde::Deserialize;
 
@@ -14,7 +15,43 @@ use serde::Deserialize;
 #[command(version = "0.1.0")]
 #[command(about = "Generiert zufällige Passwörter (CLI oder Webserver)")]
 struct Cli {
-    /// Länge der Passwörter (beim Server per ?length=N überschreibbar)
+    /// Kleinbuchstaben in den Grundvorrat (abcdefghijkmnpqrstuvwx)
+    #[arg(short = 'w', long, global = true, help_heading = BASE_HEADING)]
+    lower: bool,
+
+    /// Großbuchstaben in den Grundvorrat (ABCDEFGHJKLMNPQRSTUVWX)
+    #[arg(short = 'u', long, global = true, help_heading = BASE_HEADING)]
+    upper: bool,
+
+    /// Ziffern in den Grundvorrat (0123456789)
+    #[arg(short = 'd', long, global = true, help_heading = BASE_HEADING)]
+    digits: bool,
+
+    /// Sonderzeichen in den Grundvorrat (!#$%&*+=?@_)
+    #[arg(short = 'x', long, global = true, help_heading = BASE_HEADING)]
+    special: bool,
+
+    /// Genau ein Kleinbuchstabe
+    #[arg(long, global = true, help_heading = ONE_HEADING)]
+    one_lower: bool,
+
+    /// Genau ein Großbuchstabe
+    #[arg(long, global = true, help_heading = ONE_HEADING)]
+    one_upper: bool,
+
+    /// Genau eine Ziffer
+    #[arg(long, global = true, help_heading = ONE_HEADING)]
+    one_digit: bool,
+
+    /// Genau ein Sonderzeichen
+    #[arg(long, global = true, help_heading = ONE_HEADING)]
+    one_special: bool,
+
+    /// Genau ein Zeichen aus jeder Klasse, die nicht im Grundvorrat ist
+    #[arg(long, global = true, help_heading = ONE_HEADING)]
+    strict: bool,
+
+    /// Länge ohne Trennzeichen (beim Server per ?length=N überschreibbar)
     #[arg(short, long, default_value_t = DEFAULT_LENGTH, value_parser = parse_length, global = true)]
     length: usize,
 
@@ -22,48 +59,13 @@ struct Cli {
     #[arg(short, long, default_value = DEFAULT_SEPARATOR, allow_hyphen_values = true, global = true)]
     separator: String,
 
-    /// Keine Blöcke, Passwort am Stück ausgeben (entspricht --separator "")
+    /// Passwort am Stück ausgeben (entspricht --separator "")
     #[arg(long, conflicts_with = "separator", global = true)]
     no_separator: bool,
 
-    /// Strict-Modus für strenge Passwortrichtlinien: Sonderzeichen hinzufügen
-    /// und mindestens eines garantieren; mit --lowercase wie --upper --digit
-    /// --special, mit --alnum wie --upper --special (Server: ?strict=1)
-    #[arg(short = 'x', long, global = true)]
-    strict: bool,
-
-    /// Kleinbuchstaben-Modus: nur Kleinbuchstaben
-    /// (beim Server per ?lowercase=1 überschreibbar)
-    #[arg(short = 'w', long, conflicts_with_all = ["alnum", "digits"], global = true)]
-    lowercase: bool,
-
-    /// Alnum-Modus: Kleinbuchstaben und Ziffern 0-9
-    /// (beim Server per ?alnum=1 überschreibbar)
-    #[arg(short = 'a', long, conflicts_with = "digits", global = true)]
-    alnum: bool,
-
-    /// Ziffern-Modus: nur Ziffern 0-9, z.B. für PINs mit -l 4 oder -l 6;
-    /// keine Extras (beim Server per ?digits=1 überschreibbar)
-    #[arg(short = 'd', long, global = true)]
-    digits: bool,
-
-    /// Genau ein Großbuchstabe, Rest aus dem Grundvorrat
-    /// (mit --lowercase oder --alnum; Server: ?upper=1)
-    #[arg(long, global = true)]
-    upper: bool,
-
-    /// Genau eine Ziffer, Rest klein (nur mit --lowercase; Server: ?digit=1)
-    #[arg(long, global = true)]
-    digit: bool,
-
-    /// Genau ein Sonderzeichen, Rest aus dem Grundvorrat
-    /// (mit --lowercase oder --alnum; Server: ?special=1)
-    #[arg(long, global = true)]
-    special: bool,
-
-    /// Zusätzlich einen Hash des Passworts ausgeben, durch Tabulator getrennt
-    /// (beim Server per ?hash=ALGO überschreibbar)
-    #[arg(long, value_enum, global = true)]
+    /// Hash mit ausgeben, durch Tabulator getrennt; --hash allein bedeutet
+    /// argon2id, sonst --hash=ALGO (beim Server per ?hash oder ?hash=ALGO)
+    #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "argon2id", global = true)]
     hash: Option<Algorithm>,
 
     /// Anzahl der auszugebenden Passwörter (nur CLI)
@@ -73,6 +75,10 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 }
+
+const BASE_HEADING: &str =
+    "Grundvorrat (kombinierbar, z.B. -wd; ohne Angabe -wud; jede Klasse mindestens einmal)";
+const ONE_HEADING: &str = "Extras (genau ein Zeichen aus einer Klasse außerhalb des Grundvorrats)";
 
 #[derive(Subcommand)]
 enum Command {
@@ -126,84 +132,99 @@ struct AppState {
 struct Params {
     length: Option<usize>,
     separator: Option<String>,
-    strict: Option<String>,
-    lowercase: Option<String>,
-    alnum: Option<String>,
-    digits: Option<String>,
+    lower: Option<String>,
     upper: Option<String>,
-    digit: Option<String>,
+    digits: Option<String>,
     special: Option<String>,
-    hash: Option<Algorithm>,
+    #[serde(rename = "one-lower")]
+    one_lower: Option<String>,
+    #[serde(rename = "one-upper")]
+    one_upper: Option<String>,
+    #[serde(rename = "one-digit")]
+    one_digit: Option<String>,
+    #[serde(rename = "one-special")]
+    one_special: Option<String>,
+    strict: Option<String>,
+    hash: Option<String>,
+}
+
+type Rejection = (StatusCode, String);
+
+/// Wendet die Klassen-Schalter eines Requests auf eine Vorgabe an
+fn apply_classes(
+    mut classes: Classes,
+    params: [(Class, Option<String>); 4],
+) -> Result<Classes, Rejection> {
+    for (class, value) in params {
+        if let Some(v) = value {
+            classes.set(
+                class,
+                parse_flag(&v).map_err(|e| (StatusCode::BAD_REQUEST, e))?,
+            );
+        }
+    }
+    Ok(classes)
 }
 
 async fn password_handler(
     State(state): State<AppState>,
     Query(params): Query<Params>,
-) -> Result<String, (StatusCode, String)> {
+) -> Result<String, Rejection> {
     let bad = |msg: String| (StatusCode::BAD_REQUEST, msg);
-    let flag = |value: Option<String>, default: bool| -> Result<bool, (StatusCode, String)> {
-        match value {
-            Some(v) => parse_flag(&v).map_err(bad),
-            None => Ok(default),
+    let d = &state.defaults;
+
+    // Auf dem effektiven Vorrat aufsetzen, damit ?special=1 den Standard
+    // ergänzt statt ihn zu ersetzen.
+    let base = apply_classes(
+        d.effective_base(),
+        [
+            (Class::Lower, params.lower),
+            (Class::Upper, params.upper),
+            (Class::Digits, params.digits),
+            (Class::Special, params.special),
+        ],
+    )?;
+    // Extras aus der Servervorgabe, die durch den Request im Grundvorrat
+    // gelandet sind, fallen stillschweigend weg; explizit angeforderte
+    // Extras im Grundvorrat weist validate() ab.
+    let effective_base = if base.is_empty() {
+        Classes::DEFAULT
+    } else {
+        base
+    };
+    let mut server_one = d.one;
+    for class in Class::ALL {
+        if effective_base.contains(class) {
+            server_one.set(class, false);
         }
+    }
+    let one = apply_classes(
+        server_one,
+        [
+            (Class::Lower, params.one_lower),
+            (Class::Upper, params.one_upper),
+            (Class::Digits, params.one_digit),
+            (Class::Special, params.one_special),
+        ],
+    )?;
+    let strict = match params.strict {
+        Some(v) => parse_flag(&v).map_err(bad)?,
+        None => d.strict,
+    };
+    let hash = match params.hash.as_deref() {
+        None => state.hash,
+        Some("") => Some(Algorithm::Argon2id),
+        Some(name) => Some(Algorithm::from_str(name, true).map_err(bad)?),
     };
 
-    let d = &state.defaults;
-    // Ein im Request eingeschalteter Modus gewinnt; ein ausgeschalteter
-    // Servermodus fällt auf gemischt zurück; sonst gilt die Servervorgabe.
-    let lowercase = params
-        .lowercase
-        .map(|v| parse_flag(&v))
-        .transpose()
-        .map_err(bad)?;
-    let alnum = params
-        .alnum
-        .map(|v| parse_flag(&v))
-        .transpose()
-        .map_err(bad)?;
-    let digits = params
-        .digits
-        .map(|v| parse_flag(&v))
-        .transpose()
-        .map_err(bad)?;
-    let requested: Vec<Mode> = [
-        (lowercase, Mode::Lowercase),
-        (alnum, Mode::Alnum),
-        (digits, Mode::Digits),
-    ]
-    .into_iter()
-    .filter_map(|(flag, mode)| (flag == Some(true)).then_some(mode))
-    .collect();
-    let switched_off = |flag: Option<bool>, mode: Mode| flag == Some(false) && d.mode == mode;
-    let mode = match requested.as_slice() {
-        [] if switched_off(lowercase, Mode::Lowercase)
-            || switched_off(alnum, Mode::Alnum)
-            || switched_off(digits, Mode::Digits) =>
-        {
-            Mode::Mixed
-        }
-        [] => d.mode,
-        [single] => *single,
-        _ => {
-            return Err(bad(
-                "lowercase, alnum und digits schließen sich aus".to_string()
-            ));
-        }
-    };
-    // Bei Moduswechsel per Request gelten die Extras aus der Servervorgabe
-    // nicht; explizit im Request gesetzte Extras prüft validate().
-    let extra = |server_default: bool| mode == d.mode && server_default;
     let opts = Options {
         length: params.length.unwrap_or(d.length),
         separator: params.separator.unwrap_or_else(|| d.separator.clone()),
-        strict: flag(params.strict, d.strict)?,
-        mode,
-        upper: flag(params.upper, extra(d.upper))?,
-        digit: flag(params.digit, extra(d.digit))?,
-        special: flag(params.special, extra(d.special))?,
+        base,
+        one,
+        strict,
     };
     // Hashen ist absichtlich langsam; nicht den Async-Worker blockieren.
-    let hash = params.hash.or(state.hash);
     tokio::task::spawn_blocking(move || render(&opts, hash))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -226,15 +247,6 @@ async fn serve(host: &str, port: u16, defaults: Options, hash: Option<Algorithm>
 fn main() {
     let cli = Cli::parse();
 
-    let mode = if cli.lowercase {
-        Mode::Lowercase
-    } else if cli.alnum {
-        Mode::Alnum
-    } else if cli.digits {
-        Mode::Digits
-    } else {
-        Mode::Mixed
-    };
     let opts = Options {
         length: cli.length,
         separator: if cli.no_separator {
@@ -242,11 +254,19 @@ fn main() {
         } else {
             cli.separator
         },
+        base: Classes {
+            lower: cli.lower,
+            upper: cli.upper,
+            digits: cli.digits,
+            special: cli.special,
+        },
+        one: Classes {
+            lower: cli.one_lower,
+            upper: cli.one_upper,
+            digits: cli.one_digit,
+            special: cli.one_special,
+        },
         strict: cli.strict,
-        mode,
-        upper: cli.upper,
-        digit: cli.digit,
-        special: cli.special,
     };
     if let Err(e) = password::validate(&opts) {
         eprintln!("error: {e}");
