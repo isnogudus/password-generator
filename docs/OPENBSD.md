@@ -246,6 +246,91 @@ doas rcctl start nginx
 curl -sI https://pw.example.org/ | head -1
 ```
 
+## 5b. Hinter httpd und relayd (Bordmittel)
+
+Ganz ohne Pakete: `httpd(8)` bedient Port 80 mit der ACME-Challenge und der
+Weiterleitung auf HTTPS, `relayd(8)` terminiert TLS auf Port 443 und leitet
+an den Generator weiter. Beide Beispiele liegen im Repository unter
+`examples/httpd.conf` und `examples/relayd.conf`.
+
+**httpd** (`/etc/httpd.conf`):
+
+```
+server "pw.example.org" {
+    listen on * port 80
+
+    location "/.well-known/acme-challenge/*" {
+        root "/acme"
+        request strip 2
+    }
+
+    location "*" {
+        block return 302 "https://$HTTP_HOST$REQUEST_URI"
+    }
+}
+```
+
+`root "/acme"` ist relativ zum httpd-chroot `/var/www`, dort legt
+`acme-client` die Challenge-Dateien ab.
+
+**Zertifikat**: wie in 5a mit `acme-client`, nur schreibt die
+`/etc/acme-client.conf` das Zertifikat unter dem Namen, den relayd erwartet:
+
+```
+domain pw.example.org {
+    domain key "/etc/ssl/private/pw.example.org.key"
+    domain full chain certificate "/etc/ssl/pw.example.org.crt"
+    sign with letsencrypt
+}
+```
+
+```sh
+doas httpd -n && doas rcctl enable httpd && doas rcctl start httpd
+doas acme-client -v pw.example.org
+```
+
+**relayd** (`/etc/relayd.conf`):
+
+```
+table <pwgen> { 127.0.0.1 }
+
+http protocol "https" {
+    tls keypair "pw.example.org"
+    match request header set "X-Forwarded-For"   value "$REMOTE_ADDR"
+    match request header set "X-Forwarded-Proto" value "https"
+    match response header set "Strict-Transport-Security" value "max-age=31536000"
+    tcp { nodelay, sack, backlog 128 }
+}
+
+relay "https" {
+    listen on egress port 443 tls
+    protocol "https"
+    forward to <pwgen> port 3000 check http "/" code 200
+}
+```
+
+`tls keypair "pw.example.org"` lädt `/etc/ssl/pw.example.org.crt` und
+`/etc/ssl/private/pw.example.org.key`. Der Health-Check ruft `/` auf, das
+mit einem frischen Passwort und Status 200 antwortet; fällt der Generator
+aus, nimmt relayd ihn aus der Tabelle. `listen on egress` bindet an die
+Schnittstelle mit der Default-Route, alternativ eine feste Adresse angeben.
+
+```sh
+doas relayd -n && doas rcctl enable relayd && doas rcctl start relayd
+curl -sI https://pw.example.org/ | head -1
+```
+
+**Erneuerung** per cron (`crontab -e` als root), relayd lädt das neue
+Zertifikat beim Reload:
+
+```
+~	*	*	*	*	acme-client pw.example.org && rcctl reload relayd
+```
+
+Einen Zugriffsschutz wie `auth_basic` bietet relayd nicht. Wer ihn braucht,
+nimmt nginx oder Caddy, oder lässt den Generator nur im internen Netz
+erreichbar.
+
 ## 6. Hashes für OpenBSD-Dienste
 
 OpenBSD verwendet für `passwd` und `htpasswd` bcrypt. Der Generator liefert

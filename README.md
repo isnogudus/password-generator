@@ -278,6 +278,10 @@ printf 'admin:%s\n' "$(password-generator --hash=bcrypt | cut -f2)" > /etc/nginx
 
 Unter OpenBSD: siehe [docs/OPENBSD.md](docs/OPENBSD.md), dort mit `acme-client` und dem chrooteten nginx-Paket.
 
+### httpd und relayd (OpenBSD)
+
+Mit Bordmitteln von OpenBSD: `httpd` bedient Port 80 mit ACME-Challenge und Weiterleitung, `relayd` terminiert TLS und leitet auf `127.0.0.1:3000` weiter, mit Health-Check auf `/`. Beispiele in [examples/httpd.conf](examples/httpd.conf) und [examples/relayd.conf](examples/relayd.conf), Schritt für Schritt in [docs/OPENBSD.md](docs/OPENBSD.md).
+
 ## Projektstruktur
 
 ```
@@ -291,7 +295,9 @@ password-generator/
 ├── docs/
 │   └── OPENBSD.md     # Build und Betrieb unter OpenBSD
 ├── examples/
-│   └── nginx.conf     # Server-Block für nginx als Reverse Proxy
+│   ├── nginx.conf     # Server-Block für nginx als Reverse Proxy
+│   ├── httpd.conf     # OpenBSD httpd: Port 80, ACME-Challenge, Redirect
+│   └── relayd.conf    # OpenBSD relayd: TLS und Proxy auf den Generator
 ├── Cargo.toml
 ├── Dockerfile
 ├── compose.yml.example
