@@ -1,5 +1,6 @@
 use rand::Rng;
 use rand::seq::SliceRandom;
+use serde::Deserialize;
 
 /// Standardlänge eines Passworts (Anzahl Zeichen ohne Trennzeichen)
 pub const DEFAULT_LENGTH: usize = 16;
@@ -52,7 +53,8 @@ impl Class {
 }
 
 /// Eine Auswahl von Zeichenklassen
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
 pub struct Classes {
     pub lower: bool,
     pub upper: bool,
@@ -100,8 +102,10 @@ impl Classes {
     }
 }
 
-/// Einstellungen für die Passwort-Erzeugung
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Einstellungen für die Passwort-Erzeugung. Deserialisierbar, fehlende
+/// Felder nehmen die Standardwerte an.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
 pub struct Options {
     /// Anzahl Zeichen ohne Trennzeichen
     pub length: usize,
@@ -266,6 +270,18 @@ pub fn generate_password(opts: &Options) -> Result<String, Error> {
         &generate_chars(&mut rng, opts),
         &opts.separator,
     ))
+}
+
+/// Grobe Entropie in Bit: Länge mal log2 der Größe des Grundvorrats. Die
+/// Garantien und Extras kosten etwas; das ist die Schätzung, die auch die
+/// Web-Oberfläche anzeigt.
+pub fn entropy_bits(opts: &Options) -> u32 {
+    let pool: usize = opts
+        .effective_base()
+        .iter()
+        .map(|c| alphabet(c, &opts.separator).len())
+        .sum();
+    (opts.length as f64 * (pool as f64).log2()).round() as u32
 }
 
 #[cfg(test)]
@@ -497,6 +513,35 @@ mod tests {
             16,
         );
         assert_eq!(generate_password(&o), Err(Error::OneInBase(Class::Upper)));
+    }
+
+    #[test]
+    fn entropy_matches_readme_table() {
+        let bits = |base, length| {
+            entropy_bits(&Options {
+                length,
+                base,
+                ..Options::default()
+            })
+        };
+        assert_eq!(bits(Classes::default(), 16), 92);
+        assert_eq!(bits(classes(true, true, true, true), 16), 96);
+        assert_eq!(bits(classes(true, false, true, false), 16), 80);
+        assert_eq!(bits(classes(true, false, false, false), 16), 71);
+        assert_eq!(bits(classes(true, false, false, false), 20), 89);
+    }
+
+    #[test]
+    fn deserializes_with_defaults() {
+        let o: Options =
+            serde_json::from_str(r#"{"length": 6, "separator": "", "base": {"digits": true}}"#)
+                .unwrap();
+        assert_eq!(o.length, 6);
+        assert_eq!(o.base, classes(false, false, true, false));
+        assert_eq!(o.one, Classes::default());
+        assert!(!o.strict);
+        let o: Options = serde_json::from_str("{}").unwrap();
+        assert_eq!(o, Options::default());
     }
 
     #[test]

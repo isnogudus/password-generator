@@ -238,6 +238,54 @@ Extras (exactly one character of a class outside the base set):
       --strict       Exactly one character of every class not in the base set
 ```
 
+### Als Bibliothek
+
+Die Generierung steckt in einer eigenen Bibliothek, ohne CLI und Webserver. Für den Browser wird dieselbe Bibliothek nach WebAssembly übersetzt, etwa für Anwendungen wie [weft](https://github.com/isnogudus/weft), die Passwörter clientseitig erzeugen. Es gibt nur eine Implementierung.
+
+**Rust.** Die Features `hash` (Hash-Verfahren) und `bin` (CLI und Webserver, schließt `hash` ein) sind abschaltbar; als Bibliothek reicht `default-features = false`:
+
+```toml
+[dependencies]
+password-generator = { git = "https://github.com/isnogudus/password-generator", default-features = false, features = ["hash"] }
+```
+
+```rust
+use password_generator::{Classes, Options, generate_password};
+
+let pw = generate_password(&Options::default())?;           // x8GG.JpJN.LN40.t7qx
+let pin = generate_password(&Options {
+    length: 6,
+    separator: String::new(),
+    base: Classes { digits: true, ..Classes::default() },
+    ..Options::default()
+})?;                                                         // 193886
+```
+
+`Options` hat die Felder `length`, `separator`, `base`, `one` und `strict`, entsprechend den CLI-Schaltern, und ist mit serde deserialisierbar; fehlende Felder nehmen die Standardwerte an. `validate` prüft die Einstellungen vorab, `generate_password` liefert bei ungültigen Einstellungen einen `Error`, `entropy_bits` schätzt die Entropie. Das Hash-Modul (`Algorithm::{Bcrypt, Sha512Crypt, Argon2id}`) gehört zum Feature `hash`.
+
+**Browser (WebAssembly).** Das Crate [`wasm/`](wasm/) enthält die Bindings; [wasm-pack](https://rustwasm.github.io/wasm-pack/) baut daraus ein npm-Paket mit JavaScript-Glue und Typdefinitionen. Die Hash-Verfahren sind nicht enthalten, das Wasm ist etwa 80 KB groß.
+
+```bash
+cd wasm && wasm-pack build --release --target web    # ergibt wasm/pkg/
+```
+
+Das Verzeichnis `pkg/` wird ins Projekt kopiert oder per `npm install ../password-generator/wasm/pkg` eingebunden. Bei Vite bindet man das Wasm als URL ein und initialisiert einmal, am besten faul beim ersten Aufruf:
+
+```js
+import init, { generatePassword, validate, entropyBits } from './pkg/password_generator_wasm.js'
+import wasmUrl from './pkg/password_generator_wasm_bg.wasm?url'
+
+await init({ module_or_path: wasmUrl })
+
+generatePassword()                                              // 'x8GG.JpJN.LN40.t7qx'
+generatePassword({ length: 6, separator: '', base: { digits: true } })   // '193886'
+generatePassword({ base: { lower: true }, one: { upper: true, digits: true } })   // Apple-Stil
+generatePassword({ strict: true })                              // Standard plus genau ein Sonderzeichen
+entropyBits({ length: 20 })                                     // 115
+```
+
+Die Optionen sind ein Objekt mit denselben Feldern wie in Rust: `length`, `separator`, `base`, `one`, `strict`; `base` und `one` haben die Schlüssel `lower`, `upper`, `digits`, `special`. Ungültige Einstellungen werfen einen `Error` mit derselben Meldung wie das CLI.
+
 ## OpenBSD
 
 Build, Installation und rc.d-Dienst: siehe [docs/OPENBSD.md](docs/OPENBSD.md).
@@ -287,9 +335,14 @@ Mit Bordmitteln von OpenBSD: `httpd` bedient Port 80 mit ACME-Challenge und Weit
 ```
 password-generator/
 ├── src/
-│   ├── main.rs        # CLI, Subcommand "serve", Webserver
+│   ├── lib.rs         # Bibliothek: exportiert password und hash
 │   ├── password.rs    # Zeichenklassen und Passwort-Generierung
-│   └── hash.rs        # Hash-Verfahren (argon2id, bcrypt, sha512-crypt)
+│   ├── hash.rs        # Hash-Verfahren (Feature "hash")
+│   └── main.rs        # CLI, Subcommand "serve", Webserver (Feature "bin")
+├── wasm/              # Eigenständiges Crate: WebAssembly-Bindings für den Browser
+│   ├── Cargo.toml
+│   ├── src/lib.rs
+│   └── test.mjs       # Prüft das gebaute Paket unter Node
 ├── static/
 │   └── index.html     # Web-Oberfläche (wird ins Binary eingebettet)
 ├── docs/
@@ -323,19 +376,39 @@ Die Release-Build-Konfiguration optimiert für:
 ## Entwicklung
 
 ```bash
-cargo test     # Tests ausführen
-cargo fmt      # Code formatieren
-cargo clippy   # Linter ausführen
+cargo test                          # Tests ausführen (Bibliothek und Binary)
+cargo build --no-default-features   # nur die Bibliothek, ohne Hash- und Server-Abhängigkeiten
+cargo fmt                           # Code formatieren
+cargo clippy                        # Linter ausführen
+
+cd wasm
+wasm-pack build --release --target web            # Wasm-Paket bauen (ergibt pkg/)
+cargo clippy --target wasm32-unknown-unknown      # Linter für die Bindings
+node --test                                       # gebautes Paket unter Node prüfen
 ```
 
+Das Wasm-Crate hat einen eigenen Lockfile und Build-Cache, weil es nicht zum Workspace des Hauptcrates gehört; so bleibt der Docker-Build des Servers unberührt.
+
 ## Abhängigkeiten
+
+Bibliothek:
+
+- **rand** - Zufallszahlengenerator
+- **serde** - Deserialisierung der Optionen
+
+Feature `hash`:
+
+- **argon2**, **bcrypt**, **sha-crypt** - Hash-Verfahren
+
+Feature `bin` (CLI und Webserver):
 
 - **axum** - Moderner Web-Framework
 - **tokio** - Async Runtime
 - **clap** - CLI Argument Parser
-- **rand** - Zufallszahlengenerator
-- **serde**, **serde_json** - Query-Parameter und Vorgaben für die Web-Oberfläche
-- **argon2**, **bcrypt**, **sha-crypt** - Hash-Verfahren
+- **serde_json** - Vorgaben für die Web-Oberfläche
+- **nix** - chroot, Rechteabgabe, pledge/unveil
+
+Wasm-Crate: **wasm-bindgen**, **serde-wasm-bindgen** und **getrandom** mit JavaScript-Backend.
 
 ## Lizenz
 

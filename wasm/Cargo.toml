@@ -1,0 +1,24 @@
+[package]
+edition = "2024"
+name = "password-generator-wasm"
+version = "0.1.0"
+description = "Browser bindings (WebAssembly) for password-generator"
+repository = "https://github.com/isnogudus/password-generator"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+password-generator = {path = "..", default-features = false}
+# rand's OS entropy source needs the JavaScript backend on wasm32-unknown-unknown
+getrandom = {version = "0.2", features = ["js"]}
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+
+# Eigenständig, nicht Teil des Workspace des Hauptcrates
+[workspace]

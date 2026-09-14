@@ -1,6 +1,3 @@
-mod hash;
-mod password;
-
 use axum::{
     Router,
     extract::{Query, State},
@@ -9,9 +6,9 @@ use axum::{
     routing::get,
 };
 use clap::{Parser, Subcommand, ValueEnum};
-use hash::Algorithm;
 use nix::unistd::{Gid, Uid, User};
-use password::{
+use password_generator::hash::Algorithm;
+use password_generator::password::{
     Class, Classes, DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options,
     generate_password,
 };
@@ -446,7 +443,7 @@ fn main() {
         },
         strict: cli.strict,
     };
-    if let Err(e) = password::validate(&opts) {
+    if let Err(e) = password_generator::validate(&opts) {
         eprintln!("error: {e}");
         std::process::exit(2);
     }

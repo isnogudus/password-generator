@@ -3,3 +3,7 @@
 # Real deployment files -- only the .example template is tracked.
 /compose.yaml
 /compose.yml
+
+# Build output of the standalone wasm crate (see wasm/).
+/wasm/target
+/wasm/pkg
