@@ -242,15 +242,41 @@ Extras (exactly one character of a class outside the base set):
 
 Build, Installation und rc.d-Dienst: siehe [docs/OPENBSD.md](docs/OPENBSD.md).
 
-## Hinter Caddy betreiben
+## Hinter einem Reverse Proxy betreiben
 
-Caddy kann von Haus aus kein Programm pro Request starten (kein CGI im Kern; dafür wäre ein Custom-Build mit dem Plugin `caddy-cgi` nötig). Der übliche Weg ist daher der `serve`-Modus hinter `reverse_proxy`:
+Der Server lauscht standardmäßig nur auf `127.0.0.1:3000`, ein Reverse Proxy übernimmt TLS und die öffentliche Adresse. TLS ist nicht nur Kosmetik: Browser geben die Clipboard-API nur über HTTPS oder auf `localhost` frei, die Kopieren-Knöpfe der Oberfläche brauchen sie.
+
+### Caddy
+
+Caddy kann von Haus aus kein Programm pro Request starten (kein CGI im Kern; dafür wäre ein Custom-Build mit dem Plugin `caddy-cgi` nötig). Der übliche Weg ist daher der `serve`-Modus hinter `reverse_proxy`, Zertifikate holt Caddy selbst:
 
 ```
 pw.example.org {
     reverse_proxy 127.0.0.1:3000
 }
 ```
+
+### nginx
+
+Ein vollständiger Server-Block liegt in [examples/nginx.conf](examples/nginx.conf): HTTP-Weiterleitung auf HTTPS, TLS, Proxy auf `127.0.0.1:3000`, ein längeres `proxy_read_timeout` für `?hash` und optional `auth_basic`. Der Kern:
+
+```
+location / {
+    proxy_pass         http://127.0.0.1:3000;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_read_timeout 30s;
+}
+```
+
+Der `Accept`-Header entscheidet zwischen Oberfläche und reinem Text; nginx reicht ihn unverändert durch. Für `auth_basic` lässt sich die Passwortdatei mit dem Generator selbst füllen, nginx prüft sie über `crypt(3)`, das bcrypt auf OpenBSD und auf Linux mit libxcrypt versteht:
+
+```bash
+printf 'admin:%s\n' "$(password-generator --hash=bcrypt | cut -f2)" > /etc/nginx/htpasswd
+```
+
+Unter OpenBSD: siehe [docs/OPENBSD.md](docs/OPENBSD.md), dort mit `acme-client` und dem chrooteten nginx-Paket.
 
 ## Projektstruktur
 
@@ -264,6 +290,8 @@ password-generator/
 │   └── index.html     # Web-Oberfläche (wird ins Binary eingebettet)
 ├── docs/
 │   └── OPENBSD.md     # Build und Betrieb unter OpenBSD
+├── examples/
+│   └── nginx.conf     # Server-Block für nginx als Reverse Proxy
 ├── Cargo.toml
 ├── Dockerfile
 ├── compose.yml.example

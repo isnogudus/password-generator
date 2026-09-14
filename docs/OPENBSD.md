@@ -158,8 +158,93 @@ doas rcctl start caddy
 ```
 
 Der Dienst selbst bleibt auf `127.0.0.1` gebunden und ist nur über Caddy
-erreichbar. Alternativ geht auch das mitgelieferte `relayd`/`httpd`, Caddy ist
-aber wegen der automatischen TLS-Zertifikate der bequemere Weg.
+erreichbar. Caddy ist wegen der automatischen TLS-Zertifikate der bequemste
+Weg; wer nginx bevorzugt, findet den Aufbau im nächsten Abschnitt.
+
+## 5a. Hinter nginx
+
+nginx aus den Paketen läuft unter OpenBSD als Benutzer `www` und chrootet
+sich beim Start nach `/var/www`. Zertifikate und Konfiguration liest es vor
+dem chroot, deshalb bleiben die üblichen Pfade unter `/etc` gültig.
+
+```sh
+doas pkg_add nginx
+```
+
+**Zertifikat mit acme-client** (Bordmittel). In `/etc/acme-client.conf`:
+
+```
+authority letsencrypt {
+    api url "https://acme-v02.api.letsencrypt.org/directory"
+    account key "/etc/acme/letsencrypt-privkey.pem"
+}
+
+domain pw.example.org {
+    domain key "/etc/ssl/private/pw.example.org.key"
+    domain full chain certificate "/etc/ssl/pw.example.org.fullchain.pem"
+    sign with letsencrypt
+}
+```
+
+Die Challenge beantwortet nginx aus `/var/www/acme`, dafür im HTTP-Block auf
+Port 80 vor der Weiterleitung:
+
+```
+location /.well-known/acme-challenge/ {
+    root /var/www/acme;
+    rewrite ^/.well-known/acme-challenge/(.*)$ /$1 break;
+}
+```
+
+Erstes Zertifikat holen, dann die Erneuerung per cron (`crontab -e` als
+root):
+
+```sh
+doas acme-client -v pw.example.org
+```
+
+```
+~	*	*	*	*	acme-client pw.example.org && rcctl reload nginx
+```
+
+**Server-Block**: Den Inhalt von `examples/nginx.conf` aus dem Repository in
+`/etc/nginx/nginx.conf` innerhalb des `http { … }`-Blocks einfügen (oder als
+eigene Datei ablegen und per `include` einbinden), Hostname und die beiden
+Zertifikatspfade anpassen. Der Block nutzt bereits die acme-client-Pfade von
+oben. Der wichtige Teil ist der Proxy auf den Generator:
+
+```
+location / {
+    proxy_pass         http://127.0.0.1:3000;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_read_timeout 30s;
+}
+```
+
+Der Proxy auf `127.0.0.1:3000` funktioniert aus dem nginx-chroot heraus,
+weil Netzwerkzugriffe davon nicht betroffen sind.
+
+**Optional Zugriffsschutz**: nginx prüft `auth_basic_user_file` über
+`crypt(3)`, das unter OpenBSD bcrypt versteht. Die Datei muss im chroot
+liegen, also unter `/var/www`:
+
+```sh
+printf 'admin:%s\n' "$(password-generator --hash=bcrypt | tee /dev/tty | cut -f2)" | doas tee /var/www/htpasswd
+```
+
+Im Server-Block dann `auth_basic_user_file /htpasswd;` (Pfad relativ zum
+chroot) und die beiden `auth_basic`-Zeilen einkommentieren.
+
+**Prüfen und starten**:
+
+```sh
+doas nginx -t
+doas rcctl enable nginx
+doas rcctl start nginx
+curl -sI https://pw.example.org/ | head -1
+```
 
 ## 6. Hashes für OpenBSD-Dienste
 
