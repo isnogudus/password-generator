@@ -10,11 +10,13 @@ use axum::{
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use hash::Algorithm;
+use nix::unistd::{Gid, Uid, User};
 use password::{
     Class, Classes, DEFAULT_LENGTH, DEFAULT_SEPARATOR, MAX_LENGTH, MIN_LENGTH, Options,
     generate_password,
 };
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "password-generator")]
@@ -97,7 +99,96 @@ enum Command {
         /// Port to listen on
         #[arg(short, long, default_value_t = 3000)]
         port: u16,
+
+        /// chroot(2) into this directory after binding the socket, e.g.
+        /// /var/empty (needs root; on OpenBSD unveil already hides the
+        /// filesystem, so this is optional there)
+        #[arg(long, value_name = "DIR")]
+        chroot: Option<PathBuf>,
+
+        /// Drop privileges to this user after the chroot (needs root)
+        #[arg(long, value_name = "NAME")]
+        user: Option<String>,
     },
+}
+
+/// Löst den Benutzer vor dem chroot auf, danach ist /etc/passwd unerreichbar
+fn resolve_user(name: &str) -> Result<User, String> {
+    match User::from_name(name) {
+        Ok(Some(user)) => Ok(user),
+        Ok(None) => Err(format!("user '{name}' not found")),
+        Err(e) => Err(format!("cannot look up user '{name}': {e}")),
+    }
+}
+
+/// Setzt die Zusatzgruppen auf genau die primäre Gruppe des Zielbenutzers
+fn set_groups(gid: Gid) -> Result<(), String> {
+    #[cfg(target_vendor = "apple")]
+    {
+        // nix bietet setgroups auf macOS nicht an; direkter libc-Aufruf
+        let groups = [gid.as_raw()];
+        let res = unsafe { nix::libc::setgroups(1, groups.as_ptr()) };
+        if res != 0 {
+            return Err(format!("setgroups: {}", std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        nix::unistd::setgroups(&[gid]).map_err(|e| format!("setgroups: {e}"))
+    }
+}
+
+/// Zusagen für pledge(2), nachdem alles Privilegierte erledigt ist: Tokio
+/// braucht stdio (kqueue, Threads, mmap, getentropy) und inet (accept,
+/// setsockopt); Dateien, DNS und Benutzerwechsel sind ab hier tabu.
+#[cfg(target_os = "openbsd")]
+const PLEDGE_PROMISES: &str = "stdio inet";
+
+/// Blendet unter OpenBSD per unveil(2) das gesamte Dateisystem aus: "/" ohne
+/// Rechte macht jeden Pfad unsichtbar, der NULL-Aufruf friert das ein. Wirkt
+/// wie ein chroot nach /var/empty, braucht aber kein root.
+#[cfg(target_os = "openbsd")]
+fn unveil_nothing() -> Result<(), String> {
+    let root = std::ffi::CString::new("/").expect("no NUL");
+    let none = std::ffi::CString::new("").expect("no NUL");
+    let res = unsafe { nix::libc::unveil(root.as_ptr(), none.as_ptr()) };
+    if res != 0 {
+        return Err(format!("unveil /: {}", std::io::Error::last_os_error()));
+    }
+    let res = unsafe { nix::libc::unveil(std::ptr::null(), std::ptr::null()) };
+    if res != 0 {
+        return Err(format!("unveil lock: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+/// Schränkt den Prozess unter OpenBSD per pledge(2) auf die Zusagen ein
+#[cfg(target_os = "openbsd")]
+fn pledge() -> Result<(), String> {
+    let promises = std::ffi::CString::new(PLEDGE_PROMISES).expect("no NUL in promises");
+    let res = unsafe { nix::libc::pledge(promises.as_ptr(), std::ptr::null()) };
+    if res != 0 {
+        return Err(format!("pledge: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+/// chroot und Rechteabgabe, in dieser Reihenfolge; beides braucht root
+fn apply_sandbox(chroot: Option<&Path>, user: Option<&User>) -> Result<(), String> {
+    if let Some(dir) = chroot {
+        nix::unistd::chroot(dir).map_err(|e| format!("chroot {}: {e}", dir.display()))?;
+        nix::unistd::chdir("/").map_err(|e| format!("chdir /: {e}"))?;
+    }
+    if let Some(u) = user {
+        set_groups(u.gid)?;
+        nix::unistd::setgid(u.gid).map_err(|e| format!("setgid {}: {e}", u.gid))?;
+        nix::unistd::setuid(u.uid).map_err(|e| format!("setuid {}: {e}", u.uid))?;
+        if Uid::effective().is_root() {
+            return Err("still running as root after setuid".to_string());
+        }
+    }
+    Ok(())
 }
 
 /// Prüft das CLI-Argument --length auf den erlaubten Bereich
@@ -282,17 +373,53 @@ async fn password_handler(state: AppState, params: Params) -> Result<String, Rej
         .map_err(bad)
 }
 
-async fn serve(host: &str, port: u16, defaults: Options, hash: Option<Algorithm>) {
+/// Socket binden, dann Sandbox anwenden, dann erst die Runtime starten
+fn serve(
+    host: &str,
+    port: u16,
+    chroot: Option<&Path>,
+    user: Option<&str>,
+    defaults: Options,
+    hash: Option<Algorithm>,
+) -> Result<(), String> {
+    let user = user.map(resolve_user).transpose()?;
+
+    let addr = format!("{}:{}", host, port);
+    let listener =
+        std::net::TcpListener::bind(&addr).map_err(|e| format!("cannot bind {addr}: {e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("cannot set non-blocking: {e}"))?;
+
+    apply_sandbox(chroot, user.as_ref())?;
+    #[cfg(target_os = "openbsd")]
+    {
+        unveil_nothing()?;
+        pledge()?;
+    }
+
+    println!("Listening on http://{addr}");
+    if let Some(dir) = chroot {
+        println!("chroot: {}", dir.display());
+    }
+    if let Some(u) = &user {
+        println!("user: {} (uid {}, gid {})", u.name, u.uid, u.gid);
+    }
+    #[cfg(target_os = "openbsd")]
+    println!("unveil: no filesystem access; pledge: {PLEDGE_PROMISES}");
+
     let app = Router::new()
         .route("/", get(root_handler))
         .with_state(AppState { defaults, hash });
 
-    let addr = format!("{}:{}", host, port);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-
-    println!("Listening on http://{}", addr);
-
-    axum::serve(listener, app).await.unwrap();
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
+    runtime.block_on(async {
+        let listener = tokio::net::TcpListener::from_std(listener)
+            .map_err(|e| format!("cannot adopt listener: {e}"))?;
+        axum::serve(listener, app)
+            .await
+            .map_err(|e| format!("server error: {e}"))
+    })
 }
 
 fn main() {
@@ -325,10 +452,23 @@ fn main() {
     }
 
     match cli.command {
-        Some(Command::Serve { host, port }) => {
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(serve(&host, port, opts, cli.hash));
+        Some(Command::Serve {
+            host,
+            port,
+            chroot,
+            user,
+        }) => {
+            if let Err(e) = serve(
+                &host,
+                port,
+                chroot.as_deref(),
+                user.as_deref(),
+                opts,
+                cli.hash,
+            ) {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
         }
         None => {
             for _ in 0..cli.count {

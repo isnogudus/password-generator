@@ -77,7 +77,13 @@ Eigener Benutzer ohne Shell und ohne Home:
 doas useradd -g =uid -d /var/empty -s /sbin/nologin _pwgen
 ```
 
-rc.d-Skript `/etc/rc.d/password_generator` anlegen:
+Unter OpenBSD sichert sich der Server nach dem Binden des Ports selbst ab:
+`unveil("/", "")` blendet das gesamte Dateisystem aus, danach erlaubt
+`pledge("stdio inet")` nur noch Socket-Betrieb, Threads, Speicher und
+`getentropy(2)`; jeder andere Systemaufruf beendet den Prozess. Beides
+braucht kein root. Das Binary braucht ohnehin keine Datei mehr: Seite und
+Zeichenvorräte sind eingebettet. Der Dienst kann daher direkt als `_pwgen`
+laufen. rc.d-Skript `/etc/rc.d/password_generator` anlegen:
 
 ```sh
 #!/bin/ksh
@@ -94,8 +100,15 @@ rc_reload=NO
 rc_cmd $1
 ```
 
-`rc_bg=YES` ist nötig, weil das Programm im Vordergrund läuft und sich nicht
-selbst daemonisiert. Skript ausführbar machen, aktivieren und starten:
+`rc_bg=YES` ist nötig, weil das Programm im Vordergrund läuft und sich
+nicht selbst daemonisiert.
+
+Wer zusätzlich einen chroot möchte, lässt `daemon_user` weg und übergibt
+stattdessen `--chroot /var/empty --user _pwgen`: Der Dienst startet dann als
+root, bindet den Port, wechselt die Wurzel, gibt die Rechte ab und ruft erst
+danach unveil und pledge auf. Auf anderen Systemen ohne unveil ist das der
+Weg, das Dateisystem zu verstecken. Skript ausführbar machen, aktivieren und
+starten:
 
 ```sh
 doas chmod 755 /etc/rc.d/password_generator
@@ -118,6 +131,9 @@ stdout. Bei Problemen den Dienst zum Debuggen einmal direkt starten:
 ```sh
 doas -u _pwgen /usr/local/bin/password-generator serve --port 3000
 ```
+
+Die Startmeldung zeigt unveil und die pledge-Zusagen, bei der chroot-Variante
+zusätzlich Verzeichnis, Benutzer, uid und gid.
 
 ## 5. Hinter Caddy
 
@@ -189,7 +205,8 @@ doas rcctl restart password_generator
 
 - Der Zufall kommt über `getrandom` aus `getentropy(2)`, also aus dem
   Kernel-CSPRNG von OpenBSD.
-- `pledge(2)` und `unveil(2)` nutzt das Programm bislang nicht.
+- `unveil(2)` und `pledge(2)` (`stdio inet`) sind fest eingebaut und
+  brauchen kein root; `--chroot` ist unter OpenBSD optional.
 - Diese Anleitung wurde nicht auf einer OpenBSD-Maschine durchgespielt. Die
   Schritte entsprechen dem üblichen Vorgehen für Rust-Programme und rc.d-Dienste
   unter OpenBSD 7.7.

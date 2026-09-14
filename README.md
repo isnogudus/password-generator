@@ -141,7 +141,12 @@ password-generator serve
 
 # Eigenen Host, Port und Vorgaben angeben
 password-generator serve --host 0.0.0.0 --port 8080 -wd --length 20
+
+# Als root: nach dem Binden chroot und Rechte abgeben
+password-generator serve --chroot /var/empty --user _pwgen
 ```
+
+**Sandbox**: Mit `--chroot DIR` wechselt der Server nach dem Binden des Ports per `chroot(2)` in das Verzeichnis, mit `--user NAME` gibt er anschließend die Rechte an diesen Benutzer ab (Gruppen, gid, uid). Beides braucht root und ist für den Betrieb als Systemdienst gedacht, siehe [docs/OPENBSD.md](docs/OPENBSD.md). Das Binary braucht nach dem Start keine Dateien mehr, `/var/empty` reicht daher als Wurzel. Im Docker-Image läuft der Prozess bereits als eigener Benutzer, dort sind die Optionen nicht nötig. Unter OpenBSD blendet der Server zusätzlich immer per `unveil(2)` das Dateisystem aus und ruft `pledge("stdio inet")` auf, beides ohne root; `--chroot` ist dort optional.
 
 Sobald der Server läuft:
 
@@ -211,6 +216,8 @@ Usage: password-generator serve [OPTIONS]
 Options:
   -H, --host <HOST>            Host address to listen on [default: 127.0.0.1]
   -p, --port <PORT>            Port to listen on [default: 3000]
+      --chroot <DIR>           chroot(2) into this directory after binding the socket, e.g. /var/empty (needs root; on OpenBSD unveil already hides the filesystem, so this is optional there)
+      --user <NAME>            Drop privileges to this user after the chroot (needs root)
   -l, --length <LENGTH>        Length without separators (server: ?length=N) [default: 16]
   -s, --separator <SEPARATOR>  Separator between blocks of four (server: ?separator=X) [default: .]
       --no-separator           No blocks, print the password as one piece (same as --separator "")
