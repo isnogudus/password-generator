@@ -1,7 +1,13 @@
 mod hash;
 mod password;
 
-use axum::{Router, extract::Query, extract::State, http::StatusCode, routing::get};
+use axum::{
+    Router,
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{Html, IntoResponse, Response},
+    routing::get,
+};
 use clap::{Parser, Subcommand, ValueEnum};
 use hash::Algorithm;
 use password::{
@@ -13,62 +19,62 @@ use serde::Deserialize;
 #[derive(Parser)]
 #[command(name = "password-generator")]
 #[command(version = "0.1.0")]
-#[command(about = "Generiert zufällige Passwörter (CLI oder Webserver)")]
+#[command(about = "Generates random, easy-to-type passwords (CLI or web server)")]
 struct Cli {
-    /// Kleinbuchstaben in den Grundvorrat (abcdefghijkmnpqrstuvwx)
+    /// Lowercase letters in the base set (abcdefghijkmnpqrstuvwx)
     #[arg(short = 'w', long, global = true, help_heading = BASE_HEADING)]
     lower: bool,
 
-    /// Großbuchstaben in den Grundvorrat (ABCDEFGHJKLMNPQRSTUVWX)
+    /// Uppercase letters in the base set (ABCDEFGHJKLMNPQRSTUVWX)
     #[arg(short = 'u', long, global = true, help_heading = BASE_HEADING)]
     upper: bool,
 
-    /// Ziffern in den Grundvorrat (0123456789)
+    /// Digits in the base set (0123456789)
     #[arg(short = 'd', long, global = true, help_heading = BASE_HEADING)]
     digits: bool,
 
-    /// Sonderzeichen in den Grundvorrat (!#$%&*+=?@_)
+    /// Special characters in the base set (!#$%&*+=?@_)
     #[arg(short = 'x', long, global = true, help_heading = BASE_HEADING)]
     special: bool,
 
-    /// Genau ein Kleinbuchstabe
+    /// Exactly one lowercase letter
     #[arg(long, global = true, help_heading = ONE_HEADING)]
     one_lower: bool,
 
-    /// Genau ein Großbuchstabe
+    /// Exactly one uppercase letter
     #[arg(long, global = true, help_heading = ONE_HEADING)]
     one_upper: bool,
 
-    /// Genau eine Ziffer
+    /// Exactly one digit
     #[arg(long, global = true, help_heading = ONE_HEADING)]
     one_digit: bool,
 
-    /// Genau ein Sonderzeichen
+    /// Exactly one special character
     #[arg(long, global = true, help_heading = ONE_HEADING)]
     one_special: bool,
 
-    /// Genau ein Zeichen aus jeder Klasse, die nicht im Grundvorrat ist
+    /// Exactly one character of every class not in the base set
     #[arg(long, global = true, help_heading = ONE_HEADING)]
     strict: bool,
 
-    /// Länge ohne Trennzeichen (beim Server per ?length=N überschreibbar)
+    /// Length without separators (server: ?length=N)
     #[arg(short, long, default_value_t = DEFAULT_LENGTH, value_parser = parse_length, global = true)]
     length: usize,
 
-    /// Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar)
+    /// Separator between blocks of four (server: ?separator=X)
     #[arg(short, long, default_value = DEFAULT_SEPARATOR, allow_hyphen_values = true, global = true)]
     separator: String,
 
-    /// Passwort am Stück ausgeben (entspricht --separator "")
+    /// No blocks, print the password as one piece (same as --separator "")
     #[arg(long, conflicts_with = "separator", global = true)]
     no_separator: bool,
 
-    /// Hash mit ausgeben, durch Tabulator getrennt; --hash allein bedeutet
-    /// argon2id, sonst --hash=ALGO (beim Server per ?hash oder ?hash=ALGO)
+    /// Also print a hash, tab-separated; --hash alone means argon2id,
+    /// otherwise --hash=ALGO (server: ?hash or ?hash=ALGO)
     #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "argon2id", global = true)]
     hash: Option<Algorithm>,
 
-    /// Anzahl der auszugebenden Passwörter (nur CLI)
+    /// Number of passwords to print (CLI only)
     #[arg(short = 'n', long, default_value_t = 1)]
     count: usize,
 
@@ -77,18 +83,18 @@ struct Cli {
 }
 
 const BASE_HEADING: &str =
-    "Grundvorrat (kombinierbar, z.B. -wd; ohne Angabe -wud; jede Klasse mindestens einmal)";
-const ONE_HEADING: &str = "Extras (genau ein Zeichen aus einer Klasse außerhalb des Grundvorrats)";
+    "Base set (combinable, e.g. -wd; default -wud; every chosen class appears at least once)";
+const ONE_HEADING: &str = "Extras (exactly one character of a class outside the base set)";
 
 #[derive(Subcommand)]
 enum Command {
-    /// Webserver starten, der pro Request ein Passwort liefert
+    /// Start the web server, one password per request
     Serve {
-        /// Host-Adresse, auf der der Server lauscht
+        /// Host address to listen on
         #[arg(short = 'H', long, default_value = "127.0.0.1")]
         host: String,
 
-        /// Port, auf dem der Server lauscht
+        /// Port to listen on
         #[arg(short, long, default_value_t = 3000)]
         port: u16,
     },
@@ -96,11 +102,11 @@ enum Command {
 
 /// Prüft das CLI-Argument --length auf den erlaubten Bereich
 fn parse_length(s: &str) -> Result<usize, String> {
-    let n: usize = s.parse().map_err(|_| format!("'{s}' ist keine Zahl"))?;
+    let n: usize = s.parse().map_err(|_| format!("'{s}' is not a number"))?;
     if (MIN_LENGTH..=MAX_LENGTH).contains(&n) {
         Ok(n)
     } else {
-        Err(format!("erlaubt sind {MIN_LENGTH} bis {MAX_LENGTH}"))
+        Err(format!("allowed range is {MIN_LENGTH} to {MAX_LENGTH}"))
     }
 }
 
@@ -109,7 +115,7 @@ fn parse_flag(value: &str) -> Result<bool, String> {
     match value.to_ascii_lowercase().as_str() {
         "" | "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
-        other => Err(format!("Ungültiger Wahrheitswert '{other}'")),
+        other => Err(format!("invalid boolean value '{other}'")),
     }
 }
 
@@ -126,6 +132,36 @@ fn render(opts: &Options, hash: Option<Algorithm>) -> Result<String, String> {
 struct AppState {
     defaults: Options,
     hash: Option<Algorithm>,
+}
+
+/// Die Web-Oberfläche, mit den Servervorgaben als JSON eingebettet
+const INDEX_HTML: &str = include_str!("../static/index.html");
+
+fn index_page(state: &AppState) -> String {
+    let d = &state.defaults;
+    let base = d.effective_base();
+    let classes = |c: Classes| {
+        serde_json::json!({
+            "lower": c.lower, "upper": c.upper, "digits": c.digits, "special": c.special
+        })
+    };
+    let defaults = serde_json::json!({
+        "length": d.length,
+        "separator": d.separator,
+        "base": classes(base),
+        "one": classes(d.one),
+        "strict": d.strict,
+        "hash": state.hash.map(|h| h.to_possible_value().map(|v| v.get_name().to_string())),
+    });
+    INDEX_HTML.replace("__DEFAULTS__", &defaults.to_string())
+}
+
+/// Browser (Accept: text/html) bekommen die Oberfläche, alle anderen den reinen Text
+fn wants_html(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/html"))
 }
 
 #[derive(Deserialize)]
@@ -166,10 +202,25 @@ fn apply_classes(
     Ok(classes)
 }
 
-async fn password_handler(
+async fn root_handler(
     State(state): State<AppState>,
-    Query(params): Query<Params>,
-) -> Result<String, Rejection> {
+    headers: HeaderMap,
+    query: Result<Query<Params>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    if wants_html(&headers) {
+        return Html(index_page(&state)).into_response();
+    }
+    let params = match query {
+        Ok(Query(p)) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.body_text()).into_response(),
+    };
+    match password_handler(state, params).await {
+        Ok(text) => text.into_response(),
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+async fn password_handler(state: AppState, params: Params) -> Result<String, Rejection> {
     let bad = |msg: String| (StatusCode::BAD_REQUEST, msg);
     let d = &state.defaults;
 
@@ -233,13 +284,13 @@ async fn password_handler(
 
 async fn serve(host: &str, port: u16, defaults: Options, hash: Option<Algorithm>) {
     let app = Router::new()
-        .route("/", get(password_handler))
+        .route("/", get(root_handler))
         .with_state(AppState { defaults, hash });
 
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
-    println!("Server läuft auf http://{}", addr);
+    println!("Listening on http://{}", addr);
 
     axum::serve(listener, app).await.unwrap();
 }

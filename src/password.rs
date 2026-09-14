@@ -168,15 +168,15 @@ impl std::fmt::Display for Error {
         match self {
             Error::InvalidLength(n) => write!(
                 f,
-                "Ungültige Länge {n}: erlaubt sind {MIN_LENGTH} bis {MAX_LENGTH} Zeichen"
+                "invalid length {n}: allowed range is {MIN_LENGTH} to {MAX_LENGTH} characters"
             ),
             Error::SeparatorTooLong(n) => write!(
                 f,
-                "Trennzeichen zu lang ({n}): erlaubt sind höchstens {MAX_SEPARATOR_LEN} Zeichen"
+                "separator too long ({n}): at most {MAX_SEPARATOR_LEN} characters"
             ),
             Error::OneInBase(class) => write!(
                 f,
-                "one-{} ist überflüssig: {} ist bereits im Grundvorrat",
+                "one-{} is redundant: {} is already in the base set",
                 class.name().trim_end_matches('s'),
                 class.name()
             ),

@@ -31,7 +31,7 @@ Die Schalter lassen sich kombinieren, auch zusammengezogen wie `-wd` oder `-wudx
 
 Bewusst weggelassen:
 
-- **Leicht verwechselbare Buchstaben**: `l`, `o`, `I`, `O`. Weil sie in keinem Vorrat vorkommen, bleiben die Ziffern `0` und `1` unverwechselbar und sind enthalten.
+- **Leicht verwechselbare Buchstaben**: `l`, `o`, `I`, `O`. Weil sie in keinem Vorrat vorkommen, bleiben die Ziffern `0` und `1` unverwechselbar und sind enthalten. Die Buchstaben fehlen auch dann, wenn nur Kleinbuchstaben gewählt sind: Der Empfänger kennt die Erzeugungsregel nicht und soll nie rätseln müssen, und der Gewinn wären nur zwei Bit bei 16 Zeichen.
 - **`y` / `z` / `Y` / `Z`**: auf QWERTY- und QWERTZ-Tastaturen vertauscht, so lässt sich das Passwort auf deutschen und englischen Tastaturen gleich tippen.
 - **Problematische Sonderzeichen**: Anführungszeichen, Backslash und Backtick (Quoting-Fallen) sowie `|` (verwechselbar mit `l`/`I`). Zeichen, die im Trennzeichen vorkommen, werden zusätzlich aus den Sonderzeichen entfernt.
 
@@ -131,6 +131,10 @@ password-generator --hash=bcrypt
 
 ### Webserver
 
+Der Server liefert auf `/` zwei Dinge, je nach `Accept`-Header: Browser bekommen eine kleine Oberfläche, `curl`, `wget` und Healthchecks den reinen Text.
+
+**Web-Oberfläche**: Zeichenklassen, Extras, Länge, Trennzeichen und Hash-Verfahren lassen sich anklicken, jede Änderung erzeugt sofort ein neues Passwort. "Copy password" legt es in die Zwischenablage, bei gewähltem Hash gibt es "Copy hash" dazu. Die Startvorgaben der Oberfläche sind die Optionen, mit denen der Server gestartet wurde. Die Seite ist in das Binary eingebettet, es werden keine externen Ressourcen geladen. Der Kopieren-Knopf nutzt die Clipboard-API, die Browser nur über HTTPS oder auf `localhost` freigeben; bei reinem HTTP im LAN greift ein Fallback, der auch ohne Secure Context funktioniert.
+
 ```bash
 # Mit Default-Einstellungen (127.0.0.1:3000, 16 Zeichen, -wud)
 password-generator serve
@@ -142,10 +146,10 @@ password-generator serve --host 0.0.0.0 --port 8080 -wd --length 20
 Sobald der Server läuft:
 
 ```bash
-# Im Browser
+# Im Browser: die Oberfläche
 http://127.0.0.1:3000
 
-# Mit curl
+# Mit curl: reiner Text
 curl http://127.0.0.1:3000
 
 # Optionen pro Request
@@ -165,46 +169,66 @@ Die Query-Parameter heißen wie die Langformen der Optionen: `lower`, `upper`, `
 
 ### CLI-Optionen
 
+Die Hilfe des Programms ist englisch, das README deutsch.
+
 ```
-Generiert zufällige Passwörter (CLI oder Webserver)
+Generates random, easy-to-type passwords (CLI or web server)
 
 Usage: password-generator [OPTIONS] [COMMAND]
 
 Commands:
-  serve  Webserver starten, der pro Request ein Passwort liefert
+  serve  Start the web server, one password per request
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --length <LENGTH>        Länge ohne Trennzeichen (beim Server per ?length=N überschreibbar) [default: 16]
-  -s, --separator <SEPARATOR>  Trennzeichen zwischen den Viererblöcken (beim Server per ?separator=X überschreibbar) [default: .]
-      --no-separator           Passwort am Stück ausgeben (entspricht --separator "")
-      --hash[=<HASH>]          Hash mit ausgeben, durch Tabulator getrennt; --hash allein bedeutet argon2id, sonst --hash=ALGO (beim Server per ?hash oder ?hash=ALGO) [possible values: bcrypt, sha512-crypt, argon2id]
-  -n, --count <COUNT>          Anzahl der auszugebenden Passwörter (nur CLI) [default: 1]
-  -h, --help                   Print help
+  -l, --length <LENGTH>        Length without separators (server: ?length=N) [default: 16]
+  -s, --separator <SEPARATOR>  Separator between blocks of four (server: ?separator=X) [default: .]
+      --no-separator           No blocks, print the password as one piece (same as --separator "")
+      --hash[=<HASH>]          Also print a hash, tab-separated; --hash alone means argon2id, otherwise --hash=ALGO (server: ?hash or ?hash=ALGO) [possible values: bcrypt, sha512-crypt, argon2id]
+  -n, --count <COUNT>          Number of passwords to print (CLI only) [default: 1]
+  -h, --help                   Print help (see more with '--help')
   -V, --version                Print version
 
-Grundvorrat (kombinierbar, z.B. -wd; ohne Angabe -wud; jede Klasse mindestens einmal):
-  -w, --lower    Kleinbuchstaben in den Grundvorrat (abcdefghijkmnpqrstuvwx)
-  -u, --upper    Großbuchstaben in den Grundvorrat (ABCDEFGHJKLMNPQRSTUVWX)
-  -d, --digits   Ziffern in den Grundvorrat (0123456789)
-  -x, --special  Sonderzeichen in den Grundvorrat (!#$%&*+=?@_)
+Base set (combinable, e.g. -wd; default -wud; every chosen class appears at least once):
+  -w, --lower    Lowercase letters in the base set (abcdefghijkmnpqrstuvwx)
+  -u, --upper    Uppercase letters in the base set (ABCDEFGHJKLMNPQRSTUVWX)
+  -d, --digits   Digits in the base set (0123456789)
+  -x, --special  Special characters in the base set (!#$%&*+=?@_)
 
-Extras (genau ein Zeichen aus einer Klasse außerhalb des Grundvorrats):
-      --one-lower    Genau ein Kleinbuchstabe
-      --one-upper    Genau ein Großbuchstabe
-      --one-digit    Genau eine Ziffer
-      --one-special  Genau ein Sonderzeichen
-      --strict       Genau ein Zeichen aus jeder Klasse, die nicht im Grundvorrat ist
+Extras (exactly one character of a class outside the base set):
+      --one-lower    Exactly one lowercase letter
+      --one-upper    Exactly one uppercase letter
+      --one-digit    Exactly one digit
+      --one-special  Exactly one special character
+      --strict       Exactly one character of every class not in the base set
 ```
 
 ```
+Start the web server, one password per request
+
 Usage: password-generator serve [OPTIONS]
 
 Options:
-  -H, --host <HOST>  Host-Adresse, auf der der Server lauscht [default: 127.0.0.1]
-  -p, --port <PORT>  Port, auf dem der Server lauscht [default: 3000]
+  -H, --host <HOST>            Host address to listen on [default: 127.0.0.1]
+  -p, --port <PORT>            Port to listen on [default: 3000]
+  -l, --length <LENGTH>        Length without separators (server: ?length=N) [default: 16]
+  -s, --separator <SEPARATOR>  Separator between blocks of four (server: ?separator=X) [default: .]
+      --no-separator           No blocks, print the password as one piece (same as --separator "")
+      --hash[=<HASH>]          Also print a hash, tab-separated; --hash alone means argon2id, otherwise --hash=ALGO (server: ?hash or ?hash=ALGO) [possible values: bcrypt, sha512-crypt, argon2id]
+  -h, --help                   Print help (see more with '--help')
 
-Alle Optionen von oben gelten auch hier und setzen die Vorgaben des Servers.
+Base set (combinable, e.g. -wd; default -wud; every chosen class appears at least once):
+  -w, --lower    Lowercase letters in the base set (abcdefghijkmnpqrstuvwx)
+  -u, --upper    Uppercase letters in the base set (ABCDEFGHJKLMNPQRSTUVWX)
+  -d, --digits   Digits in the base set (0123456789)
+  -x, --special  Special characters in the base set (!#$%&*+=?@_)
+
+Extras (exactly one character of a class outside the base set):
+      --one-lower    Exactly one lowercase letter
+      --one-upper    Exactly one uppercase letter
+      --one-digit    Exactly one digit
+      --one-special  Exactly one special character
+      --strict       Exactly one character of every class not in the base set
 ```
 
 ## OpenBSD
@@ -229,6 +253,8 @@ password-generator/
 │   ├── main.rs        # CLI, Subcommand "serve", Webserver
 │   ├── password.rs    # Zeichenklassen und Passwort-Generierung
 │   └── hash.rs        # Hash-Verfahren (argon2id, bcrypt, sha512-crypt)
+├── static/
+│   └── index.html     # Web-Oberfläche (wird ins Binary eingebettet)
 ├── docs/
 │   └── OPENBSD.md     # Build und Betrieb unter OpenBSD
 ├── Cargo.toml
@@ -267,7 +293,7 @@ cargo clippy   # Linter ausführen
 - **tokio** - Async Runtime
 - **clap** - CLI Argument Parser
 - **rand** - Zufallszahlengenerator
-- **serde** - Deserialisierung der Query-Parameter
+- **serde**, **serde_json** - Query-Parameter und Vorgaben für die Web-Oberfläche
 - **argon2**, **bcrypt**, **sha-crypt** - Hash-Verfahren
 
 ## Lizenz

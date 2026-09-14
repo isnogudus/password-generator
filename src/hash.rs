@@ -5,11 +5,11 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Algorithm {
-    /// bcrypt (`$2b$`), z.B. für Caddy basic_auth, htpasswd, OpenBSD passwd
+    /// bcrypt (`$2b$`), e.g. for Caddy basic_auth, htpasswd, OpenBSD passwd
     Bcrypt,
-    /// SHA-512-crypt (`$6$`), z.B. für /etc/shadow unter Linux
+    /// SHA-512-crypt (`$6$`), e.g. for /etc/shadow on Linux
     Sha512Crypt,
-    /// Argon2id (PHC-String), modernes Verfahren für eigene Anwendungen
+    /// Argon2id (PHC string), modern choice for your own applications
     Argon2id,
 }
 

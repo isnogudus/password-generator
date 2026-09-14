@@ -1,6 +1,7 @@
 # password-generator -- multi-stage build: static musl binary -> minimal runtime.
 #
-# The runtime stage stays bare Alpine: the binary is self-contained.
+# The runtime stage stays bare Alpine: the binary is self-contained (the web
+# UI in static/ is compiled in via include_str!).
 
 # --- 1. build ----------------------------------------------------------------
 FROM rust:1-alpine AS build
@@ -16,6 +17,7 @@ RUN mkdir src \
     && rm -r src
 
 COPY src ./src
+COPY static ./static
 # touch: make cargo notice the real sources are newer than the dummy build.
 RUN touch src/main.rs && cargo build --release --locked
 

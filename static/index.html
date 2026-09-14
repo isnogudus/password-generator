@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Password Generator</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --fg: #1a1c1f; --muted: #6b7280; --card: #ffffff; --border: #d9dde3;
+    --accent: #2563eb; --accent-fg: #ffffff; --ok: #15803d; --err: #b91c1c; --mono-bg: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111316; --fg: #e6e8eb; --muted: #9aa3ad; --card: #1a1d21; --border: #2e3239;
+      --accent: #3b82f6; --accent-fg: #ffffff; --ok: #4ade80; --err: #f87171; --mono-bg: #0d0f12;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.35rem; margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .out {
+    display: flex; gap: 8px; align-items: stretch;
+  }
+  .pw {
+    flex: 1; min-width: 0; font: 600 clamp(1.1rem, 4vw, 1.6rem)/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--mono-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; letter-spacing: 0.04em; word-break: break-all; user-select: all; cursor: text;
+  }
+  .pw.err { color: var(--err); font-size: 1rem; font-weight: 400; letter-spacing: 0; }
+  .hash-row { margin-top: 10px; }
+  .hash {
+    font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--mono-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; word-break: break-all; user-select: all;
+  }
+  button {
+    font: inherit; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+    color: var(--fg); padding: 10px 14px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  button:active { transform: translateY(1px); }
+  button.copied { color: var(--ok); border-color: var(--ok); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  fieldset { border: 0; padding: 0; margin: 0 0 12px; }
+  legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+  .hint { color: var(--muted); font-size: 0.85rem; }
+  input[type=number], input[type=text], select {
+    font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); color: var(--fg); width: 5.5em;
+  }
+  select { width: auto; }
+  input[type=range] { width: 200px; vertical-align: middle; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 0.85rem; flex-wrap: wrap; }
+  footer { color: var(--muted); font-size: 0.8rem; margin-top: 24px; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Password Generator</h1>
+
+  <div class="card">
+    <div class="out">
+      <div class="pw" id="pw" title="Click to select">…</div>
+    </div>
+    <div class="hash-row" id="hashRow" hidden>
+      <div class="hash" id="hash"></div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="copy">Copy password</button>
+      <button id="copyHash" hidden>Copy hash</button>
+      <button id="regen">New password</button>
+    </div>
+    <div class="meta">
+      <span id="entropy"></span>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <fieldset>
+      <legend>Base set <span class="hint">(every chosen class appears at least once)</span></legend>
+      <div class="row">
+        <label><input type="checkbox" id="lower"> lowercase <code>abcdefghijkmnpqrstuvwx</code></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="upper"> uppercase <code>ABCDEFGHJKLMNPQRSTUVWX</code></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="digits"> digits <code>0123456789</code></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="special"> special <code>!#$%&amp;*+=?@_</code></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Extras <span class="hint">(exactly one character of a class outside the base set)</span></legend>
+      <div class="row">
+        <label><input type="checkbox" id="one-lower"> one lowercase</label>
+        <label><input type="checkbox" id="one-upper"> one uppercase</label>
+        <label><input type="checkbox" id="one-digit"> one digit</label>
+        <label><input type="checkbox" id="one-special"> one special</label>
+        <label><input type="checkbox" id="strict"> strict <span class="hint">(one of every missing class)</span></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Format</legend>
+      <div class="row">
+        <label>Length <input type="range" id="lengthRange" min="4" max="64" step="1">
+          <input type="number" id="length" min="4" max="128"></label>
+      </div>
+      <div class="row">
+        <label>Separator <input type="text" id="separator" maxlength="8" size="4"></label>
+        <label><input type="checkbox" id="noSeparator"> none</label>
+        <span class="hint">blocks of four</span>
+      </div>
+      <div class="row">
+        <label>Hash
+          <select id="hashAlgo">
+            <option value="">none</option>
+            <option value="argon2id">argon2id</option>
+            <option value="bcrypt">bcrypt</option>
+            <option value="sha512-crypt">sha512-crypt</option>
+          </select>
+        </label>
+      </div>
+    </fieldset>
+  </div>
+
+  <footer>
+    Plain-text API: <code id="apiUrl"></code> — same parameters as query string.
+    Ambiguous characters (<code>l o I O</code>) and <code>y z</code> (swapped on QWERTY/QWERTZ) are never used.
+  </footer>
+</main>
+
+<script>
+(() => {
+  const DEFAULTS = __DEFAULTS__;
+  const $ = (id) => document.getElementById(id);
+  const CLASSES = ['lower', 'upper', 'digits', 'special'];
+  const ONES = ['one-lower', 'one-upper', 'one-digit', 'one-special'];
+  const SIZES = { lower: 22, upper: 22, digits: 10, special: 11 };
+
+  // Vorgaben des Servers in die Bedienelemente übernehmen
+  for (const c of CLASSES) $(c).checked = !!DEFAULTS.base[c];
+  for (const o of ONES) $(o).checked = !!DEFAULTS.one[o.slice(4)];
+  $('strict').checked = !!DEFAULTS.strict;
+  $('length').value = DEFAULTS.length;
+  $('lengthRange').value = Math.min(DEFAULTS.length, 64);
+  $('separator').value = DEFAULTS.separator;
+  $('noSeparator').checked = DEFAULTS.separator === '';
+  $('hashAlgo').value = DEFAULTS.hash || '';
+
+  let lastSeparator = DEFAULTS.separator || '.';
+
+  function params() {
+    const p = new URLSearchParams();
+    for (const c of CLASSES) p.set(c, $(c).checked ? '1' : '0');
+    for (const o of ONES) if ($(o).checked) p.set(o, '1');
+    if ($('strict').checked) p.set('strict', '1');
+    p.set('length', $('length').value);
+    p.set('separator', $('noSeparator').checked ? '' : $('separator').value);
+    if ($('hashAlgo').value) p.set('hash', $('hashAlgo').value);
+    return p;
+  }
+
+  function entropyBits() {
+    let pool = CLASSES.filter((c) => $(c).checked).reduce((n, c) => n + SIZES[c], 0);
+    if (pool === 0) pool = SIZES.lower + SIZES.upper + SIZES.digits; // Standard -wud
+    return Math.round(Number($('length').value) * Math.log2(pool));
+  }
+
+  let inflight = 0;
+  async function generate() {
+    const id = ++inflight;
+    const p = params();
+    $('apiUrl').textContent = location.origin + '/?' + p.toString();
+    $('status').textContent = p.has('hash') ? 'hashing…' : '';
+    try {
+      const res = await fetch('/?' + p.toString(), { headers: { Accept: 'text/plain' } });
+      const text = await res.text();
+      if (id !== inflight) return;
+      if (!res.ok) {
+        $('pw').textContent = text;
+        $('pw').classList.add('err');
+        $('hashRow').hidden = true;
+        $('copyHash').hidden = true;
+        $('entropy').textContent = '';
+      } else {
+        const [pw, hash] = text.trim().split('\t');
+        $('pw').textContent = pw;
+        $('pw').classList.remove('err');
+        $('hash').textContent = hash || '';
+        $('hashRow').hidden = !hash;
+        $('copyHash').hidden = !hash;
+        $('entropy').textContent = '≈ ' + entropyBits() + ' bits';
+      }
+      $('status').textContent = '';
+    } catch (e) {
+      if (id !== inflight) return;
+      $('pw').textContent = 'Request failed: ' + e;
+      $('pw').classList.add('err');
+      $('status').textContent = '';
+    }
+  }
+
+  async function copyText(text, button, label) {
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch (_) { /* Fallback unten */ }
+    if (!ok) {
+      // Fallback für http ohne Secure Context
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      document.body.removeChild(ta);
+    }
+    const old = button.textContent;
+    button.textContent = ok ? 'Copied!' : 'Copy failed';
+    button.classList.toggle('copied', ok);
+    setTimeout(() => { button.textContent = old; button.classList.remove('copied'); }, 1500);
+  }
+
+  $('copy').addEventListener('click', () => {
+    if (!$('pw').classList.contains('err')) copyText($('pw').textContent, $('copy'));
+  });
+  $('copyHash').addEventListener('click', () => copyText($('hash').textContent, $('copyHash')));
+  $('regen').addEventListener('click', generate);
+  $('pw').addEventListener('click', () => {
+    const range = document.createRange();
+    range.selectNodeContents($('pw'));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+
+  // Jede Änderung erzeugt sofort ein neues Passwort
+  for (const c of [...CLASSES, ...ONES, 'strict', 'hashAlgo']) $(c).addEventListener('change', generate);
+  $('lengthRange').addEventListener('input', () => { $('length').value = $('lengthRange').value; generate(); });
+  $('length').addEventListener('change', () => {
+    let v = Math.max(4, Math.min(128, Number($('length').value) || 16));
+    $('length').value = v;
+    $('lengthRange').value = Math.min(v, 64);
+    generate();
+  });
+  $('separator').addEventListener('input', () => {
+    if ($('separator').value !== '') lastSeparator = $('separator').value;
+    $('noSeparator').checked = $('separator').value === '';
+    generate();
+  });
+  $('noSeparator').addEventListener('change', () => {
+    $('separator').value = $('noSeparator').checked ? '' : lastSeparator;
+    generate();
+  });
+
+  generate();
+})();
+</script>
+</body>
+</html>
