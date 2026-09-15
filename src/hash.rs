@@ -1,8 +1,8 @@
+use clap::ValueEnum;
 use serde::Deserialize;
 
 /// Unterstützte Hash-Verfahren
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[cfg_attr(feature = "bin", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Algorithm {
     /// bcrypt (`$2b$`), e.g. for Caddy basic_auth, htpasswd, OpenBSD passwd

@@ -19,7 +19,7 @@ RUN mkdir src \
 COPY src ./src
 COPY static ./static
 # touch: make cargo notice the real sources are newer than the dummy build.
-RUN touch src/main.rs src/lib.rs && cargo build --release --locked
+RUN touch src/main.rs && cargo build --release --locked
 
 # --- 2. runtime --------------------------------------------------------------
 FROM alpine:3.21
